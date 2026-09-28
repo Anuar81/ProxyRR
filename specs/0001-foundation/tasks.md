@@ -7,4 +7,4 @@
 - [x] T5. `deny.toml` con licencias permitidas y advisories. Verificar local con `cargo deny check`. (CA 4)
 - [x] T6. `.github/workflows/ci.yml` con matriz de 3 SO + job deny. (CA 3, 4, 5)
 - [x] T7. Verificación local en Windows: `fmt --check`, `clippy -D warnings`, `test` verdes.
-- [ ] T8. PR `spec/0001-foundation` con CI verde en los 3 SO. Marcar spec como `terminada`.
+- [x] T8. PR `spec/0001-foundation` con CI verde en los 3 SO. Marcar spec como `terminada`.

@@ -1,6 +1,6 @@
 # 0001 — Foundation
 
-- Estado: borrador
+- Estado: terminada
 - Fase: F0
 - Depende de: —
 

@@ -18,10 +18,11 @@ Referencia funcional: el set de features de Proxyman (implementación propia, si
 
 | Nº | Spec | Fase | Estado |
 |----|------|------|--------|
-| 0001 | [foundation](0001-foundation/requirements.md) | F0 | borrador |
+| 0001 | [foundation](0001-foundation/requirements.md) | F0 | terminada (PR #1) |
 | 0002 | [android-capture](0002-android-capture/requirements.md) | F4 | borrador (requisitos capturados temprano) |
+| 0003 | [ca-certificates](0003-ca-certificates/requirements.md) | F1 | en curso |
 
-Próximas previstas (se escriben al cerrar la anterior): `ca-certificates`, `http-proxy`, `https-mitm`,
+Próximas previstas (se escriben al cerrar la anterior): `http-proxy`, `https-mitm`,
 `flow-store`, `control-api`, `cli`, `har-export`.
 
 ## Mapa de features → fase

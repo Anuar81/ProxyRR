@@ -1,0 +1,12 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# Kiro Crew dashboard (local)
+.kiro/
+
+# OS / editores
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

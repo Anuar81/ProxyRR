@@ -1,0 +1,54 @@
+# Deuda técnica
+
+Registro vivo de atajos y límites conocidos. No se arreglan en la spec donde aparecen para no inflarla:
+se anotan acá y los resuelve la spec de cierre `tech-debt-cleanup` (ver roadmap). Si una deuda bloquea
+una spec intermedia, se resuelve ahí y se marca como pagada con el número de esa spec.
+
+Cada entrada: id, origen, qué pasa, por qué importa, propuesta. Al pagarla: `Pagada en NNNN`.
+
+| Id | Origen | Estado |
+|----|--------|--------|
+| TD-001 | 0004 | abierta |
+| TD-002 | 0004 | abierta |
+| TD-003 | 0004 | abierta |
+| TD-004 | 0004 | abierta |
+| TD-005 | 0001 | abierta |
+
+## TD-001 — Timeout de conexión al origen de 10 s
+
+- **Origen:** 0004 (`CONNECT_TIMEOUT` en `crates/proxyrr-core/src/handler.rs`).
+- **Qué pasa:** con un sitio lento el proxy devuelve 502/504 a los 10 s, antes de lo que se rendiría un
+  navegador directo (~20 s o más). Visto con neverssl.com el 2026-09-28. Además `HttpConnector` reparte
+  ese timeout entre todas las IPs del host, así que con IPv6 + IPv4 a cada una le toca menos.
+- **Propuesta:** subir a 30 s y hacerlo configurable en `ProxyConfig` (y en `proxyrr start --connect-timeout`).
+  Test: origen que acepta tarde (o `TcpListener` sin `accept` con backlog lleno) → no corta antes del valor.
+
+## TD-002 — El tamaño del flujo es solo el `Content-Length` declarado
+
+- **Origen:** 0004.
+- **Qué pasa:** respuestas chunked o sin `Content-Length` no muestran tamaño.
+- **Propuesta:** contar bytes reales con un body envolvente. Probablemente se paga sola en `flow-store`
+  al capturar los bodies.
+
+## TD-003 — Detección de loop sin DNS
+
+- **Origen:** 0004.
+- **Qué pasa:** se detecta `localhost`, loopback y la IP exacta de escucha. Con `--listen 0.0.0.0` y un
+  request a la IP de LAN de la propia máquina, o a un hostname que resuelve a ella, el proxy se reenvía a sí mismo.
+- **Propuesta:** comparar contra las IPs de las interfaces locales y contra la dirección ya resuelta al
+  conectar; o marcar los requests salientes con un header propio y rechazar los que vuelvan con él.
+
+## TD-004 — `shutdown` no espera las conexiones en curso
+
+- **Origen:** 0004 (`Proxy::shutdown`).
+- **Qué pasa:** deja de aceptar y libera el puerto, pero las conexiones abiertas siguen hasta cerrarse
+  solas. Para el CLI da igual (el proceso termina); para la app de escritorio, que apaga y prende el proxy
+  sin salir, quedarían túneles vivos.
+- **Propuesta:** `JoinSet`/`CancellationToken` por conexión, cierre ordenado con un plazo máximo.
+
+## TD-005 — `LICENSE` sin el texto completo
+
+- **Origen:** 0001.
+- **Qué pasa:** el archivo tiene el resumen y el link al texto oficial de PolyForm Small Business 1.0.0,
+  no el texto completo (las descargas estaban bloqueadas al crearlo).
+- **Propuesta:** pegar el texto oficial cuando la licencia deje de ser tentativa.

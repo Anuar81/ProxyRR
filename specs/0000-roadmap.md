@@ -26,6 +26,9 @@ Referencia funcional: el set de features de Proxyman (implementación propia, si
 Próximas previstas (se escriben al cerrar la anterior): `https-mitm`,
 `flow-store`, `control-api`, `cli`, `har-export`.
 
+**Cierre (última spec del roadmap):** `tech-debt-cleanup`: paga todo lo que siga abierto en
+[TECH-DEBT.md](TECH-DEBT.md). Se numera cuando se crea, como cualquier otra.
+
 ## Mapa de features → fase
 
 **F1**: proxy HTTP, CONNECT/TLS MITM, CA raíz propia + certificados hoja al vuelo con caché, bypass list,

@@ -21,6 +21,8 @@ specs/
 4. **Chicas.** Si `tasks.md` pasa de ~10 tareas, se parte en dos specs.
 5. **Todo criterio de aceptación tiene un test** (unitario o de integración) que lo verifica. El `tasks.md` nombra ese test.
 6. Una spec se implementa en su propia rama `spec/NNNN-nombre` y entra por PR.
+7. **Deuda técnica:** todo atajo o límite conocido que no se resuelve en la spec actual se anota en
+   [`TECH-DEBT.md`](TECH-DEBT.md) con un id `TD-NNN`. La spec de cierre `tech-debt-cleanup` paga lo que quede abierto.
 
 ## Formato de criterios (EARS)
 

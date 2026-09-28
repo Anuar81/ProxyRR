@@ -97,14 +97,30 @@ impl CertificateAuthority {
     /// o si falla la E/S.
     pub fn load_or_create(dir: &Path) -> Result<Self> {
         let (cert_path, key_path) = paths(dir);
-        match (cert_path.exists(), key_path.exists()) {
-            (false, false) => {
-                let ca = Self::generate()?;
-                ca.save(dir)?;
-                Ok(ca)
-            }
-            _ => Self::load(dir),
+        if cert_path.exists() || key_path.exists() {
+            return Self::load(dir);
         }
+        let ca = Self::generate()?;
+        match ca.save(dir) {
+            Ok(()) => Ok(ca),
+            // Otro proceso/hilo creó la CA entre el chequeo y el guardado: se usa la suya.
+            Err(Error::AlreadyExists(_)) => Self::load_when_complete(dir),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Carga la CA que otro proceso está terminando de guardar (clave primero, cert después).
+    fn load_when_complete(dir: &Path) -> Result<Self> {
+        const ATTEMPTS: u32 = 50;
+        for _ in 1..ATTEMPTS {
+            match Self::load(dir) {
+                Err(Error::Incomplete(_)) => {
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                other => return other,
+            }
+        }
+        Self::load(dir)
     }
 
     /// Carga la CA existente de `dir`.
@@ -150,15 +166,11 @@ impl CertificateAuthority {
     /// Si alguno de los archivos ya existe o falla la E/S.
     pub fn save(&self, dir: &Path) -> Result<()> {
         let (cert_path, key_path) = paths(dir);
-        for p in [&cert_path, &key_path] {
-            if p.exists() {
-                return Err(Error::AlreadyExists(p.clone()));
-            }
-        }
         fs::create_dir_all(dir).map_err(|source| io_err(dir, source))?;
-        // Clave primero: si algo falla a mitad, queda "incompleta", nunca un cert huérfano válido.
-        write_atomic(&key_path, self.key_pem.as_bytes(), true)?;
-        write_atomic(&cert_path, self.cert_pem.as_bytes(), false)
+        // La clave es el punto de commit: quien la publica primero es dueño de la CA.
+        // Si algo falla después, queda "incompleta", nunca un cert válido con otra clave.
+        write_new(&key_path, self.key_pem.as_bytes(), true)?;
+        write_new(&cert_path, self.cert_pem.as_bytes(), false)
     }
 
     /// Certificado de la CA en PEM.
@@ -233,11 +245,37 @@ fn pem_to_der(pem: &str) -> Result<Vec<u8>> {
     Ok(parsed.contents)
 }
 
-/// Escribe a `<path>.tmp` y renombra, para no dejar archivos a medio escribir.
-fn write_atomic(path: &Path, data: &[u8], private: bool) -> Result<()> {
-    let tmp = path.with_extension("tmp");
+/// Crea `path` con `data` de forma atómica y SIN sobrescribir nunca.
+///
+/// 1. Escribe a un temporal con nombre aleatorio en el mismo directorio, creado con
+///    `create_new` (falla si existe: no sigue symlinks ni reutiliza archivos ajenos) y,
+///    en Unix, con `0600` desde el momento de su creación si `private`.
+/// 2. Lo publica con un hard link, que es atómico y falla si `path` ya existe
+///    (a diferencia de `rename`, que pisa). Si el sistema de archivos no admite hard
+///    links, se cae a crear `path` directamente con `create_new`.
+fn write_new(path: &Path, data: &[u8], private: bool) -> Result<()> {
+    let dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let name = path
+        .file_name()
+        .map_or_else(|| "archivo".into(), |n| n.to_string_lossy());
+    let tmp = dir.join(format!(".{name}.{}.tmp", hex::encode(random_bytes::<8>()?)));
+
+    write_exclusive(&tmp, data, private)?;
+    let linked = fs::hard_link(&tmp, path);
+    let _ = fs::remove_file(&tmp);
+    match linked {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            Err(Error::AlreadyExists(path.to_path_buf()))
+        }
+        // FS sin hard links (p. ej. FAT): sin atomicidad, pero tampoco pisa nada.
+        Err(_) => write_exclusive(path, data, private),
+    }
+}
+
+fn write_exclusive(path: &Path, data: &[u8], private: bool) -> Result<()> {
     let mut opts = fs::OpenOptions::new();
-    opts.write(true).create(true).truncate(true);
+    opts.write(true).create_new(true);
     #[cfg(unix)]
     if private {
         use std::os::unix::fs::OpenOptionsExt;
@@ -245,12 +283,16 @@ fn write_atomic(path: &Path, data: &[u8], private: bool) -> Result<()> {
     }
     #[cfg(not(unix))]
     let _ = private;
-    let mut file = opts.open(&tmp).map_err(|source| io_err(&tmp, source))?;
+    let mut file = opts.open(path).map_err(|source| {
+        if source.kind() == std::io::ErrorKind::AlreadyExists {
+            Error::AlreadyExists(path.to_path_buf())
+        } else {
+            io_err(path, source)
+        }
+    })?;
     file.write_all(data)
         .and_then(|()| file.sync_all())
-        .map_err(|source| io_err(&tmp, source))?;
-    drop(file);
-    fs::rename(&tmp, path).map_err(|source| io_err(path, source))
+        .map_err(|source| io_err(path, source))
 }
 
 #[cfg(test)]
@@ -373,6 +415,42 @@ mod tests {
             other.save(dir.path()),
             Err(Error::AlreadyExists(_))
         ));
+    }
+
+    #[test]
+    fn concurrent_load_or_create_agrees_on_one_ca() {
+        let dir = tmp();
+        let ders: Vec<Vec<u8>> = std::thread::scope(|s| {
+            let handles: Vec<_> = (0..8)
+                .map(|_| {
+                    s.spawn(|| {
+                        CertificateAuthority::load_or_create(dir.path())
+                            .unwrap()
+                            .cert_der()
+                            .to_vec()
+                    })
+                })
+                .collect();
+            handles.into_iter().map(|h| h.join().unwrap()).collect()
+        });
+        assert!(
+            ders.windows(2).all(|w| w[0] == w[1]),
+            "todas usan la misma CA"
+        );
+        let on_disk = CertificateAuthority::load(dir.path()).unwrap();
+        assert_eq!(on_disk.cert_der(), ders[0].as_slice());
+    }
+
+    #[test]
+    fn save_leaves_no_temp_files() {
+        let dir = tmp();
+        CertificateAuthority::load_or_create(dir.path()).unwrap();
+        let mut names: Vec<String> = fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        assert_eq!(names, vec![CA_KEY_FILE, CA_CERT_FILE]);
     }
 
     #[test]

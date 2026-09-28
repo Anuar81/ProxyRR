@@ -38,7 +38,9 @@ pub fn subject_hash_old(cert_der: &[u8]) -> Result<u32>;
 - **Serial** aleatorio de 16 bytes en CA y hojas (los navegadores rechazan seriales repetidos de un mismo issuer).
 - **`subject_hash_old`**: MD5 del DER del `Name` del subject; los primeros 4 bytes leídos little-endian.
   El DER del subject sale de `x509-parser` (`subject().as_raw()`).
-- **Escritura atómica**: se escribe a `*.tmp` y se renombra; clave primero. Nunca se sobrescribe una CA existente.
+- **Escritura sin pisar**: temporal con nombre aleatorio creado con `create_new` (0600 en Unix desde su
+  creación) y publicado con hard link, que es atómico y falla si el destino existe. La clave es el punto
+  de commit; si dos procesos crean la CA a la vez, el que pierde carga la del ganador. Nunca se sobrescribe.
 - **Caché**: `lru::LruCache<String, Arc<LeafCert>>` detrás de `Mutex`; host normalizado a minúsculas.
   La emisión ocurre fuera del lock para no serializar hosts distintos.
 - **Directorio por defecto**: `%APPDATA%\ProxyRR` (Windows), `~/Library/Application Support/ProxyRR` (macOS),

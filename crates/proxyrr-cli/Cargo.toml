@@ -18,6 +18,7 @@ clap.workspace = true
 proxyrr-api.workspace = true
 proxyrr-cert.workspace = true
 proxyrr-core.workspace = true
+proxyrr-devices.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]

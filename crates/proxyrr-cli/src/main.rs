@@ -11,8 +11,11 @@ use std::sync::Arc;
 use clap::{Parser, Subcommand};
 use proxyrr_api::{ApiConfig, ApiServer, Engine, EngineOptions, ProxySettings};
 use proxyrr_cert::{CA_CERT_FILE, CertificateAuthority};
-use proxyrr_core::{FlowEvent, ProxyConfig};
+use proxyrr_core::{FlowEvent, LocalSite, ProxyConfig};
+use proxyrr_devices::{CaFiles, CertSite};
 use tokio::sync::broadcast::error::RecvError;
+
+mod setup;
 
 /// Proxy HTTP(S) de depuración multiplataforma.
 #[derive(Debug, Parser)]
@@ -50,6 +53,25 @@ enum Command {
     /// Autoridad certificante de ProxyRR.
     #[command(subcommand)]
     Ca(CaCommand),
+    /// Guía paso a paso para usar ProxyRR con un dispositivo o este equipo.
+    Setup {
+        /// Destino.
+        #[arg(value_enum)]
+        target: setup::TargetArg,
+        /// IP de esta máquina que ve el dispositivo. Por defecto se detecta la de la LAN.
+        #[arg(long, value_name = "IP")]
+        host: Option<String>,
+        /// Puerto del proxy.
+        #[arg(long, default_value_t = proxyrr_core::DEFAULT_PORT)]
+        port: u16,
+        /// Hacer la instalación automática cuando el destino la permite
+        /// (`ios-simulator` en macOS, o este mismo equipo).
+        #[arg(long)]
+        install: bool,
+        /// No imprimir el QR.
+        #[arg(long)]
+        no_qr: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -67,6 +89,20 @@ enum CaCommand {
     },
     /// Imprime el directorio donde vive la CA.
     Path,
+    /// Instala la CA como raíz de confianza de este equipo (tu usuario).
+    Install {
+        /// Mostrar los comandos sin ejecutarlos.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Quita esta CA (por huella) del almacén de confianza de este equipo.
+    Uninstall {
+        /// Mostrar los comandos sin ejecutarlos.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Dice si la CA está instalada y es de confianza, y en qué almacenes.
+    Status,
 }
 
 fn main() -> ExitCode {
@@ -97,12 +133,8 @@ fn run(cli: Cli) -> Result<(), String> {
             api,
             api_listen,
         } => {
-            // Con la API, la CA se carga siempre: la UI puede prender el MITM más tarde.
-            let ca = if mitm || api {
-                Some(Arc::new(load(&resolve_data_dir(data_dir)?)?))
-            } else {
-                None
-            };
+            // La CA se carga siempre: sirve la página `proxyrr.cert` y la UI puede prender el MITM más tarde.
+            let ca = Arc::new(load(&resolve_data_dir(data_dir)?)?);
             let api = api.then(|| ApiConfig {
                 listen: api_listen,
                 token: std::env::var("PROXYRR_API_TOKEN")
@@ -120,6 +152,22 @@ fn run(cli: Cli) -> Result<(), String> {
             )
         }
         Command::Ca(ca) => run_ca(ca, &resolve_data_dir(data_dir)?),
+        Command::Setup {
+            target,
+            host,
+            port,
+            install,
+            no_qr,
+        } => setup::run_setup(
+            &resolve_data_dir(data_dir)?,
+            &setup::SetupArgs {
+                target: target.into(),
+                host,
+                port,
+                install,
+                qr: !no_qr,
+            },
+        ),
     }
 }
 
@@ -128,7 +176,7 @@ fn resolve_data_dir(explicit: Option<PathBuf>) -> Result<PathBuf, String> {
 }
 
 fn run_start(
-    ca: Option<Arc<CertificateAuthority>>,
+    ca: Arc<CertificateAuthority>,
     settings: ProxySettings,
     api: Option<ApiConfig>,
 ) -> Result<(), String> {
@@ -136,13 +184,20 @@ fn run_start(
         .enable_all()
         .build()
         .map_err(|e| format!("no se pudo iniciar el runtime: {e}"))?;
-    let mitm_banner = match (&ca, settings.mitm) {
-        (Some(ca), true) => Some(mitm_banner(ca, &settings.bypass)?),
-        _ => None,
+    let mitm_banner = if settings.mitm {
+        Some(mitm_banner(&ca, &settings.bypass)?)
+    } else {
+        None
     };
+    let files = CaFiles::from_ca(&ca).map_err(|e| e.to_string())?;
+    let site: Arc<dyn LocalSite> = Arc::new(CertSite::new(files));
     runtime.block_on(async move {
         let engine = Arc::new(Engine::new(EngineOptions {
-            ca,
+            ca: Some(ca),
+            proxy: ProxyConfig {
+                local_site: Some(site),
+                ..ProxyConfig::default()
+            },
             ..EngineOptions::default()
         }));
         // Suscribir antes de prender: no se pierde ningún flujo.
@@ -170,6 +225,10 @@ fn run_start(
             Some(banner) => println!("{banner}"),
             None => println!("HTTPS pasa por túnel sin descifrar; usá --mitm para descifrarlo."),
         }
+        println!(
+            "Certificado: abrí http://proxyrr.cert en un dispositivo que ya use el proxy, \
+             o `proxyrr setup <destino>` para la guía paso a paso."
+        );
         if let Some(api) = &api {
             println!("API de control: {}  token: {}", api.base_url(), api.token());
         }
@@ -292,6 +351,9 @@ fn run_ca(cmd: CaCommand, data_dir: &Path) -> Result<(), String> {
             println!("{}", data_dir.display());
             Ok(())
         }
+        CaCommand::Install { dry_run } => setup::ca_install(data_dir, dry_run),
+        CaCommand::Uninstall { dry_run } => setup::ca_uninstall(data_dir, dry_run),
+        CaCommand::Status => setup::ca_status(data_dir),
         CaCommand::Info => {
             let ca = load(data_dir)?;
             let info = ca.info().map_err(|e| e.to_string())?;

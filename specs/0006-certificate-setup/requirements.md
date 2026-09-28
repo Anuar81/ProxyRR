@@ -1,6 +1,8 @@
 # 0006 — Certificate setup
 
-- Estado: borrador (requisitos capturados temprano; se diseña después de `control-api`)
+- Estado: en curso
+- Alcance de esta entrega: CA 1–8 y 10–13 (CLI, página de la CA, guías). CA 9 se completa en 0002
+  (automatización del emulador con adb) y CA 14 en `desktop-mvp` (menú Certificado sobre las mismas piezas).
 - Fase: F1 (CLI + página de la CA) / F2 (menú en la app) / F4 (automatización por dispositivo)
 - Depende de: 0003, 0005, `control-api`
 - Relacionada: 0002 (Android: la automatización con `adb` vive allá)

@@ -14,6 +14,7 @@ publish = false
 # Todas las versiones se fijan UNA sola vez acá; los crates usan `dep.workspace = true`.
 [workspace.dependencies]
 axum = { version = "=0.8.9", default-features = false, features = ["http1", "json", "tokio", "ws"] }
+base64 = "=0.22.1"
 bytes = "=1.12.1"
 clap = { version = "=4.6.7", features = ["derive"] }
 futures-util = { version = "=0.3.34", default-features = false, features = ["sink", "std"] }
@@ -24,6 +25,8 @@ hyper-util = { version = "=0.1.21", features = ["client-legacy", "http1", "tokio
 hyper-rustls = { version = "=0.27.10", default-features = false, features = ["http1", "ring", "tls12"] }
 lru = "=0.18.5"
 md-5 = "=0.11.0"
+# Solo el renderer de texto (QR en la terminal); sin `image`.
+qrcode = { version = "=0.14.1", default-features = false }
 rcgen = { version = "=0.14.10", features = ["x509-parser"] }
 ring = "=0.17.14"
 rustls = { version = "=0.23.45", default-features = false, features = ["ring", "std", "tls12"] }
@@ -44,6 +47,7 @@ x509-parser = { version = "=0.18.1", features = ["verify"] }
 proxyrr-api = { path = "crates/proxyrr-api" }
 proxyrr-cert = { path = "crates/proxyrr-cert" }
 proxyrr-core = { path = "crates/proxyrr-core" }
+proxyrr-devices = { path = "crates/proxyrr-devices" }
 proxyrr-store = { path = "crates/proxyrr-store" }
 
 [workspace.lints.rust]

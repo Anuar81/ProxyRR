@@ -591,3 +591,62 @@ async fn shared_flow_ids_never_repeat_across_instances() {
     }
     assert_eq!(seen, [1, 2]);
 }
+
+#[derive(Debug)]
+struct EchoSite;
+
+impl proxyrr_core::LocalSite for EchoSite {
+    fn respond(&self, request: &proxyrr_core::LocalRequest<'_>) -> proxyrr_core::LocalResponse {
+        proxyrr_core::LocalResponse {
+            status: 200,
+            headers: vec![("content-type".into(), "text/plain".into())],
+            body: Bytes::from(format!(
+                "direct={} path={} ua={}",
+                request.direct,
+                request.path,
+                request.user_agent.unwrap_or("-")
+            )),
+        }
+    }
+}
+
+#[tokio::test]
+async fn local_site_is_served_by_the_proxy_and_captured() {
+    let proxy = Proxy::start(ProxyConfig {
+        listen: "127.0.0.1:0".parse().unwrap(),
+        local_site: Some(std::sync::Arc::new(EchoSite)),
+        ..ProxyConfig::default()
+    })
+    .await
+    .unwrap();
+    let mut events = proxy.subscribe();
+    let addr = proxy.local_addr();
+
+    // A través del proxy: `proxyrr.cert` no se resuelve ni se reenvía.
+    let via = send(
+        addr,
+        "GET http://proxyrr.cert/ca.pem HTTP/1.1\r\nHost: proxyrr.cert\r\nUser-Agent: test-ua\r\nConnection: close\r\n\r\n",
+    )
+    .await;
+    assert_eq!(via.status(), 200, "{}", via.head);
+    assert_eq!(via.body, "direct=false path=/ca.pem ua=test-ua");
+    let flow = next_http(&mut events).await;
+    assert_eq!(flow.url, "http://proxyrr.cert/ca.pem");
+    assert_eq!(flow.status, 200);
+    assert!(flow.error.is_none());
+
+    // Directo al proxy (dispositivo sin proxy configurado todavía).
+    let direct = send(
+        addr,
+        &format!("GET /cert HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"),
+    )
+    .await;
+    assert_eq!(direct.body, "direct=true path=/ ua=-");
+    let other = send(
+        addr,
+        &format!("GET / HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"),
+    )
+    .await;
+    assert_eq!(other.status(), 400, "fuera de /cert sigue siendo un proxy");
+    proxy.shutdown().await;
+}

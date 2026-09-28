@@ -66,7 +66,8 @@ Cada entrada: id, origen, qué pasa, por qué importa, propuesta. Al pagarla: `P
   y no quedan registrados en ningún lado. Si el listener falla de forma persistente, nadie se entera.
 - **Propuesta:** `tracing` en `proxyrr-core` (warn en errores de `accept` y de conexión, con conteo para
   no inundar), `tracing-subscriber` en el CLI con `--log-level`, y la API de control reenviando esos
-  logs a la UI. Momento natural: la spec `cli` o `control-api`, antes del cierre.
+  logs a la UI. Momento natural: la spec `cli` (la 0008 `control-api` la dejó afuera para no inflarse;
+  la API ya tiene el canal de avisos donde se sumarían).
 
 
 ## TD-007 — El CLI no permite confiar en CAs extra del lado del origen

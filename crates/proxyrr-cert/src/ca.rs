@@ -98,7 +98,8 @@ impl CertificateAuthority {
     pub fn load_or_create(dir: &Path) -> Result<Self> {
         let (cert_path, key_path) = paths(dir);
         if cert_path.exists() || key_path.exists() {
-            return Self::load(dir);
+            // Puede ser otro proceso a mitad de `save` (clave ya publicada, cert todavía no).
+            return Self::load_when_complete(dir);
         }
         let ca = Self::generate()?;
         match ca.save(dir) {
@@ -109,12 +110,15 @@ impl CertificateAuthority {
         }
     }
 
-    /// Carga la CA que otro proceso está terminando de guardar (clave primero, cert después).
+    /// Carga la CA que otro proceso puede estar terminando de guardar (clave primero, cert después).
+    /// Solo espera en ese estado intermedio: clave presente y cert faltante. Cualquier otra falta
+    /// (por ejemplo, cert sin clave) es un error inmediato.
     fn load_when_complete(dir: &Path) -> Result<Self> {
         const ATTEMPTS: u32 = 50;
+        let (cert_path, _) = paths(dir);
         for _ in 1..ATTEMPTS {
             match Self::load(dir) {
-                Err(Error::Incomplete(_)) => {
+                Err(Error::Incomplete(missing)) if missing == cert_path => {
                     std::thread::sleep(std::time::Duration::from_millis(20));
                 }
                 other => return other,
@@ -391,6 +395,23 @@ mod tests {
             Err(Error::Incomplete(_))
         ));
         assert!(!dir.path().join(CA_KEY_FILE).exists());
+    }
+
+    /// Estado intermedio de otro `save`: clave publicada, cert todavía no. Hay que esperar, no fallar
+    /// (lo que rompió `concurrent_load_or_create_agrees_on_one_ca` en el CI de Linux).
+    #[test]
+    fn waits_for_cert_while_another_save_is_in_progress() {
+        let dir = tmp();
+        let ca = CertificateAuthority::generate().unwrap();
+        fs::write(dir.path().join(CA_KEY_FILE), &ca.key_pem).unwrap();
+        let loaded = std::thread::scope(|s| {
+            s.spawn(|| {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                fs::write(dir.path().join(CA_CERT_FILE), ca.cert_pem()).unwrap();
+            });
+            CertificateAuthority::load_or_create(dir.path()).unwrap()
+        });
+        assert_eq!(loaded.cert_der(), ca.cert_der());
     }
 
     #[test]

@@ -3,6 +3,7 @@
 use std::fmt;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use proxyrr_cert::CertificateAuthority;
 
@@ -24,6 +25,26 @@ pub struct ProxyConfig {
     pub upstream_roots: Vec<Vec<u8>>,
     /// Bytes máximos que se guardan de cada body (el resto se reenvía igual, sin guardar).
     pub max_body_capture: usize,
+    /// Contador de ids de flujo. Compartir el mismo entre varias instancias (reinicios) garantiza ids
+    /// únicos aunque una instancia vieja siga cerrando conexiones.
+    pub flow_ids: FlowIds,
+}
+
+/// Contador de ids de flujo, compartible entre instancias del proxy. Empieza en 1.
+#[derive(Debug, Clone)]
+pub struct FlowIds(Arc<AtomicU64>);
+
+impl Default for FlowIds {
+    fn default() -> Self {
+        Self(Arc::new(AtomicU64::new(1)))
+    }
+}
+
+impl FlowIds {
+    /// Reserva el siguiente id.
+    pub(crate) fn next(&self) -> u64 {
+        self.0.fetch_add(1, Ordering::Relaxed)
+    }
 }
 
 impl Default for ProxyConfig {
@@ -33,6 +54,7 @@ impl Default for ProxyConfig {
             mitm: None,
             upstream_roots: Vec::new(),
             max_body_capture: DEFAULT_MAX_BODY_CAPTURE,
+            flow_ids: FlowIds::default(),
         }
     }
 }

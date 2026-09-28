@@ -9,8 +9,9 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
+use proxyrr_api::{ApiConfig, ApiServer, Engine, EngineOptions, ProxySettings};
 use proxyrr_cert::{CA_CERT_FILE, CertificateAuthority};
-use proxyrr_core::{FlowEvent, MitmConfig, Proxy, ProxyConfig};
+use proxyrr_core::{FlowEvent, ProxyConfig};
 use tokio::sync::broadcast::error::RecvError;
 
 /// Proxy HTTP(S) de depuración multiplataforma.
@@ -38,6 +39,13 @@ enum Command {
         /// Host que no se descifra (repetible): `example.com` o `*.example.com` para subdominios.
         #[arg(long, value_name = "HOST", requires = "mitm")]
         bypass: Vec<String>,
+        /// Levantar también la API de control local (la usa la app de escritorio y scripts).
+        /// El token se imprime al arrancar; `PROXYRR_API_TOKEN` lo fija.
+        #[arg(long)]
+        api: bool,
+        /// Dirección de la API (solo loopback).
+        #[arg(long, value_name = "IP:PUERTO", default_value_t = ApiConfig::default().listen, requires = "api")]
+        api_listen: SocketAddr,
     },
     /// Autoridad certificante de ProxyRR.
     #[command(subcommand)]
@@ -86,20 +94,30 @@ fn run(cli: Cli) -> Result<(), String> {
             listen,
             mitm,
             bypass,
+            api,
+            api_listen,
         } => {
-            let mitm = if mitm {
-                let ca = load(&resolve_data_dir(data_dir)?)?;
-                let mut config = MitmConfig::new(Arc::new(ca));
-                config.bypass = bypass;
-                Some(config)
+            // Con la API, la CA se carga siempre: la UI puede prender el MITM más tarde.
+            let ca = if mitm || api {
+                Some(Arc::new(load(&resolve_data_dir(data_dir)?)?))
             } else {
                 None
             };
-            run_start(ProxyConfig {
-                listen,
-                mitm,
-                ..ProxyConfig::default()
-            })
+            let api = api.then(|| ApiConfig {
+                listen: api_listen,
+                token: std::env::var("PROXYRR_API_TOKEN")
+                    .ok()
+                    .filter(|t| !t.is_empty()),
+            });
+            run_start(
+                ca,
+                ProxySettings {
+                    listen,
+                    mitm,
+                    bypass,
+                },
+                api,
+            )
         }
         Command::Ca(ca) => run_ca(ca, &resolve_data_dir(data_dir)?),
     }
@@ -109,25 +127,51 @@ fn resolve_data_dir(explicit: Option<PathBuf>) -> Result<PathBuf, String> {
     explicit.map_or_else(default_data_dir, Ok)
 }
 
-fn run_start(config: ProxyConfig) -> Result<(), String> {
+fn run_start(
+    ca: Option<Arc<CertificateAuthority>>,
+    settings: ProxySettings,
+    api: Option<ApiConfig>,
+) -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .map_err(|e| format!("no se pudo iniciar el runtime: {e}"))?;
-    let listen = config.listen;
-    let mitm_banner = config.mitm.as_ref().map(mitm_banner).transpose()?;
+    let mitm_banner = match (&ca, settings.mitm) {
+        (Some(ca), true) => Some(mitm_banner(ca, &settings.bypass)?),
+        _ => None,
+    };
     runtime.block_on(async move {
-        let proxy = Proxy::start(config)
+        let engine = Arc::new(Engine::new(EngineOptions {
+            ca,
+            ..EngineOptions::default()
+        }));
+        // Suscribir antes de prender: no se pierde ningún flujo.
+        let mut events = engine.subscribe_flows();
+        let status = engine
+            .start_proxy(settings)
             .await
-            .map_err(|e| format!("no se pudo escuchar en {listen}: {e}"))?;
-        // Suscribir antes de anunciar la dirección: no se pierde ningún flujo.
-        let mut events = proxy.subscribe();
-        let addr = proxy.local_addr();
+            .map_err(|e| e.to_string())?;
+        let api = match api {
+            Some(config) => match ApiServer::start(config, Arc::clone(&engine)).await {
+                Ok(api) => Some(api),
+                Err(e) => {
+                    engine.stop_proxy().await;
+                    return Err(e.to_string());
+                }
+            },
+            None => None,
+        };
+        let addr = status
+            .listen
+            .expect("el proxy recién prendido tiene dirección");
         println!("ProxyRR escuchando en {addr} (Ctrl+C para salir)");
         println!("Configurá {addr} como proxy HTTP y HTTPS en tu navegador o SO.");
         match &mitm_banner {
             Some(banner) => println!("{banner}"),
             None => println!("HTTPS pasa por túnel sin descifrar; usá --mitm para descifrarlo."),
+        }
+        if let Some(api) = &api {
+            println!("API de control: {}  token: {}", api.base_url(), api.token());
         }
         if !addr.ip().is_loopback() {
             eprintln!(
@@ -151,23 +195,26 @@ fn run_start(config: ProxyConfig) -> Result<(), String> {
                 },
             }
         }
-        proxy.shutdown().await;
+        if let Some(api) = api {
+            api.shutdown().await;
+        }
+        engine.stop_proxy().await;
         println!("ProxyRR detenido.");
         Ok(())
     })
 }
 
 /// Texto de arranque con MITM: qué CA se usa y cómo instalarla.
-fn mitm_banner(mitm: &MitmConfig) -> Result<String, String> {
-    let info = mitm.ca.info().map_err(|e| e.to_string())?;
+fn mitm_banner(ca: &CertificateAuthority, bypass: &[String]) -> Result<String, String> {
+    let info = ca.info().map_err(|e| e.to_string())?;
     let mut banner = format!(
         "Descifrando HTTPS con la CA {} (SHA-256 {}).\n\
          Si el navegador da error de certificado, instalá la CA como raíz de confianza: \
          `proxyrr ca export --out ca.pem`.",
         info.subject, info.sha256_fingerprint
     );
-    if !mitm.bypass.is_empty() {
-        let _ = write!(banner, "\nSin descifrar: {}", mitm.bypass.join(", "));
+    if !bypass.is_empty() {
+        let _ = write!(banner, "\nSin descifrar: {}", bypass.join(", "));
     }
     Ok(banner)
 }

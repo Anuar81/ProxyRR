@@ -5,7 +5,6 @@ use std::error::Error as StdError;
 use std::io;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
@@ -31,7 +30,7 @@ use tokio::time::timeout;
 use tokio_rustls::LazyConfigAcceptor;
 
 use crate::capture::{Recorder, Side, Tap, headers_vec};
-use crate::config::ProxyConfig;
+use crate::config::{FlowIds, ProxyConfig};
 use crate::event::{FlowEvent, HttpFlow, TunnelFlow};
 use crate::headers::strip_hop_by_hop;
 use crate::mitm::{Mitm, Prefixed, TLS_HANDSHAKE, crypto_provider, describe_client_tls_error};
@@ -53,7 +52,7 @@ const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 pub(crate) struct Context {
     local_addr: SocketAddr,
     events: broadcast::Sender<FlowEvent>,
-    next_id: AtomicU64,
+    next_id: FlowIds,
     client: UpstreamClient,
     mitm: Option<Mitm>,
     max_body_capture: usize,
@@ -81,7 +80,7 @@ impl Context {
         Ok(Self {
             local_addr,
             events,
-            next_id: AtomicU64::new(1),
+            next_id: config.flow_ids.clone(),
             client,
             mitm: config.mitm.as_ref().map(Mitm::new),
             max_body_capture: config.max_body_capture,
@@ -89,7 +88,7 @@ impl Context {
     }
 
     fn next_id(&self) -> u64 {
-        self.next_id.fetch_add(1, Ordering::Relaxed)
+        self.next_id.next()
     }
 
     fn emit(&self, event: FlowEvent) {

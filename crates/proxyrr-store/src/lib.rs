@@ -182,6 +182,22 @@ impl FlowStore {
         self.lock().flows.values().map(FlowSummary::from).collect()
     }
 
+    /// Resúmenes de los flujos con id mayor que `after`, en orden (para resincronizar una UI).
+    #[must_use]
+    pub fn list_after(&self, after: u64) -> Vec<FlowSummary> {
+        self.lock()
+            .flows
+            .range(after.saturating_add(1)..)
+            .map(|(_, flow)| FlowSummary::from(flow))
+            .collect()
+    }
+
+    /// Resumen de un flujo por id.
+    #[must_use]
+    pub fn summary(&self, id: u64) -> Option<FlowSummary> {
+        self.lock().flows.get(&id).map(FlowSummary::from)
+    }
+
     /// Flujo completo por id. Clonarlo no copia los bodies (`Bytes` comparte el buffer).
     #[must_use]
     pub fn get(&self, id: u64) -> Option<StoredFlow> {
@@ -219,7 +235,8 @@ impl FlowStore {
         self.dropped_events.load(Ordering::Relaxed)
     }
 
-    fn note_dropped(&self, count: u64) {
+    /// Suma `count` eventos perdidos (lo usa quien consume el canal del motor).
+    pub fn note_dropped(&self, count: u64) {
         self.dropped_events.fetch_add(count, Ordering::Relaxed);
     }
 
@@ -344,6 +361,19 @@ mod tests {
         assert_eq!(ids, [1, 2, 3]);
         assert!(store.list()[0].tunnel);
         assert_eq!(store.list()[0].method, "CONNECT");
+    }
+
+    #[test]
+    fn list_after_and_summary() {
+        let store = FlowStore::default();
+        for id in 1..=4 {
+            store.apply(&http(id));
+        }
+        let ids: Vec<u64> = store.list_after(2).iter().map(|s| s.id).collect();
+        assert_eq!(ids, [3, 4]);
+        assert!(store.list_after(u64::MAX).is_empty());
+        assert_eq!(store.summary(3).map(|s| s.id), Some(3));
+        assert_eq!(store.summary(9), None);
     }
 
     #[test]

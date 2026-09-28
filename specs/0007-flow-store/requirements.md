@@ -1,6 +1,6 @@
 # 0007 — Flow store
 
-- Estado: en curso
+- Estado: terminada (PR #5)
 - Fase: F1
 - Depende de: 0004, 0005
 

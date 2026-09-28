@@ -568,3 +568,26 @@ async fn origin_cut_mid_body_is_incomplete() {
     assert_eq!(bodies.response.size, 10);
     assert!(!bodies.response.complete);
 }
+
+#[tokio::test]
+async fn shared_flow_ids_never_repeat_across_instances() {
+    let ids = proxyrr_core::FlowIds::default();
+    let origin = start_origin().await;
+    let mut seen = Vec::new();
+    for _ in 0..2 {
+        let proxy = Proxy::start(ProxyConfig {
+            listen: "127.0.0.1:0".parse().unwrap(),
+            flow_ids: ids.clone(),
+            ..ProxyConfig::default()
+        })
+        .await
+        .unwrap();
+        let mut events = proxy.subscribe();
+        let request =
+            format!("GET http://{origin}/ HTTP/1.1\r\nHost: {origin}\r\nConnection: close\r\n\r\n");
+        send(proxy.local_addr(), &request).await;
+        seen.push(next_http(&mut events).await.id);
+        proxy.shutdown().await;
+    }
+    assert_eq!(seen, [1, 2]);
+}

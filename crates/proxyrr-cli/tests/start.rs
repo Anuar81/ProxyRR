@@ -179,3 +179,73 @@ fn bypass_requires_mitm() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("--mitm"), "{stderr}");
 }
+
+#[test]
+fn api_flag_serves_the_control_api_with_the_env_token() {
+    let data = tempfile::tempdir().unwrap();
+    let token = "token-de-prueba-cli-0008";
+    let child = Command::new(env!("CARGO_BIN_EXE_proxyrr"))
+        .args([
+            "start",
+            "--listen",
+            "127.0.0.1:0",
+            "--api",
+            "--api-listen",
+            "127.0.0.1:0",
+        ])
+        .arg("--data-dir")
+        .arg(data.path())
+        .env("PROXYRR_API_TOKEN", token)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut running = Running(child);
+    let stdout = running.0.stdout.take().unwrap();
+    let (tx, lines) = mpsc::channel();
+    thread::spawn(move || {
+        for line in BufReader::new(stdout).lines() {
+            if tx.send(line.unwrap()).is_err() {
+                break;
+            }
+        }
+    });
+    let api_line = loop {
+        let line = lines.recv_timeout(LIMIT).expect("no imprimió la API");
+        if line.starts_with("API de control:") {
+            break line;
+        }
+    };
+    assert!(api_line.ends_with(&format!("token: {token}")), "{api_line}");
+    let api = api_line
+        .strip_prefix("API de control: http://")
+        .and_then(|rest| rest.split(' ').next())
+        .unwrap()
+        .to_owned();
+
+    let mut stream = TcpStream::connect(&api).unwrap();
+    stream.set_read_timeout(Some(LIMIT)).unwrap();
+    write!(
+        stream,
+        "GET /api/v1/status HTTP/1.1\r\nHost: {api}\r\nAuthorization: Bearer {token}\r\nConnection: close\r\n\r\n"
+    )
+    .unwrap();
+    let mut reply = String::new();
+    stream.read_to_string(&mut reply).unwrap();
+    assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
+    assert!(reply.contains(r#""running":true"#), "{reply}");
+    assert!(
+        data.path().join("ca.pem").exists(),
+        "con --api la CA queda lista para el MITM"
+    );
+}
+
+#[test]
+fn api_listen_requires_api() {
+    let output = Command::new(env!("CARGO_BIN_EXE_proxyrr"))
+        .args(["start", "--api-listen", "127.0.0.1:9999"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("--api"));
+}

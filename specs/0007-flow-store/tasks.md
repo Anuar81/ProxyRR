@@ -5,4 +5,4 @@
 - [x] T3. Captura cableada en el forward HTTP, MITM y respuestas propias. Tests: `http_proxy.rs::captures_headers_and_bodies`, `truncates_capture_but_forwards_everything`, `rejected_flow_is_captured`, `capture_does_not_buffer_the_stream`, `origin_cut_mid_body_is_incomplete`; `https_mitm.rs::decrypted_bodies_are_captured` (CA 1–6).
 - [x] T4. `FlowStore`: junta, lista, get, clear, límites y eviction. Tests: `merges_head_and_bodies_by_id`, `lists_in_arrival_order_with_tunnels`, `orphan_bodies_are_ignored`, `evicts_oldest_by_count`, `evicts_oldest_by_body_bytes`, `clear_empties_everything` (CA 7, 8, 10).
 - [x] T5. `record()` + conteo de eventos perdidos. Tests: `record_counts_dropped_events`, `tests/end_to_end.rs::proxy_flows_end_up_in_the_store` (CA 9).
-- [ ] T6. fmt, clippy, test, deny en verde local y en CI. PR. Marcar spec como `terminada`.
+- [x] T6. fmt, clippy, test, deny en verde local y en CI. PR. Marcar spec como `terminada`.

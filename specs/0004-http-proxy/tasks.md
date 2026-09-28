@@ -6,4 +6,4 @@
 - [x] T4. Errores. Tests: `upstream_down_is_502`, `origin_form_is_400`, `https_scheme_without_connect_is_400`, `self_request_is_508` (CA 3, 4, 6).
 - [x] T5. CONNECT. Tests: `connect_tunnels_bytes`, `connect_unreachable_is_502`, `connect_to_self_is_508` (CA 5–6).
 - [x] T6. CLI `proxyrr start [--listen]` + advertencia no-loopback. Tests: `proxyrr-cli/tests/start.rs` (CA 8–9).
-- [ ] T7. fmt, clippy, test, deny en verde local y en CI. PR. Marcar spec como `terminada`.
+- [x] T7. fmt, clippy, test, deny en verde local y en CI. PR. Marcar spec como `terminada`.

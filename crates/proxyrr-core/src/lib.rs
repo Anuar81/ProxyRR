@@ -1,8 +1,9 @@
 //! Motor del proxy de ProxyRR.
 //!
-//! Hoy (spec 0004): proxy HTTP/1.1 con reenvío de requests en forma absoluta, túneles `CONNECT`
-//! sin descifrar y un canal de eventos por flujo. El MITM TLS llega en la spec `https-mitm` y la
-//! cadena de hooks que modifica tráfico con las reglas (F3). Ver `docs/adr/0001-stack-y-arquitectura.md`.
+//! Proxy HTTP/1.1 (spec 0004) con descifrado HTTPS opcional (spec 0005): reenvío de requests en
+//! forma absoluta, túneles `CONNECT` opacos o terminados con certificados de la CA de ProxyRR, y un
+//! canal de eventos por flujo. La cadena de hooks que modifica tráfico llega con las reglas (F3).
+//! Ver `docs/adr/0001-stack-y-arquitectura.md`.
 //!
 //! ```no_run
 //! # async fn demo() -> std::io::Result<()> {
@@ -20,9 +21,10 @@ mod config;
 mod event;
 mod handler;
 mod headers;
+mod mitm;
 mod server;
 
-pub use config::{DEFAULT_PORT, ProxyConfig};
+pub use config::{DEFAULT_PORT, MitmConfig, ProxyConfig};
 pub use event::{FlowEvent, HttpFlow, TunnelFlow};
 pub use headers::strip_hop_by_hop;
 pub use server::Proxy;

@@ -14,6 +14,8 @@ Cada entrada: id, origen, qué pasa, por qué importa, propuesta. Al pagarla: `P
 | TD-004 | 0004 | abierta |
 | TD-005 | 0001 | abierta |
 | TD-006 | 0004 | abierta |
+| TD-007 | 0005 | abierta |
+| TD-008 | 0005 | abierta |
 
 ## TD-001 — Timeout de conexión al origen de 10 s
 
@@ -63,3 +65,20 @@ Cada entrada: id, origen, qué pasa, por qué importa, propuesta. Al pagarla: `P
 - **Propuesta:** `tracing` en `proxyrr-core` (warn en errores de `accept` y de conexión, con conteo para
   no inundar), `tracing-subscriber` en el CLI con `--log-level`, y la API de control reenviando esos
   logs a la UI. Momento natural: la spec `cli` o `control-api`, antes del cierre.
+
+
+## TD-007 — El CLI no permite confiar en CAs extra del lado del origen
+
+- **Origen:** 0005.
+- **Qué pasa:** el motor acepta `upstream_roots` (CA corporativa, servidor de desarrollo con certificado
+  propio), pero `proxyrr start` no lo expone: esos orígenes dan 502 con `--mitm`.
+- **Propuesta:** `--upstream-ca <archivo.pem>` repetible y, aparte y con advertencia fuerte,
+  `--insecure-upstream` para no verificar en desarrollo local.
+
+## TD-008 — `ServerConfig` TLS se arma en cada handshake
+
+- **Origen:** 0005 (`Mitm::server_config`).
+- **Qué pasa:** la hoja sale de la caché, pero la config de rustls (parseo de la clave incluido) se
+  reconstruye por conexión. Es barato, pero se repite en cada túnel.
+- **Propuesta:** cachear `Arc<ServerConfig>` (o `Arc<CertifiedKey>` con un `ResolvesServerCert`) por host,
+  con la misma LRU. Medir antes: si no aparece en un perfil, cerrar como no-deuda.

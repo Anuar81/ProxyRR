@@ -21,9 +21,10 @@ Referencia funcional: el set de features de Proxyman (implementación propia, si
 | 0001 | [foundation](0001-foundation/requirements.md) | F0 | terminada (PR #1) |
 | 0002 | [android-capture](0002-android-capture/requirements.md) | F4 | borrador (requisitos capturados temprano) |
 | 0003 | [ca-certificates](0003-ca-certificates/requirements.md) | F1 | terminada (PR #2) |
-| 0004 | [http-proxy](0004-http-proxy/requirements.md) | F1 | en curso |
+| 0004 | [http-proxy](0004-http-proxy/requirements.md) | F1 | terminada (PR #3) |
+| 0005 | [https-mitm](0005-https-mitm/requirements.md) | F1 | en curso |
 
-Próximas previstas (se escriben al cerrar la anterior): `https-mitm`,
+Próximas previstas (se escriben al cerrar la anterior):
 `flow-store`, `control-api`, `cli`, `har-export`.
 
 **Cierre (última spec del roadmap):** `tech-debt-cleanup`: paga todo lo que siga abierto en

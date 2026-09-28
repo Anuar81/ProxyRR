@@ -14,12 +14,10 @@ use tokio::task::JoinHandle;
 
 use crate::config::ProxyConfig;
 use crate::event::FlowEvent;
-use crate::handler::{self, Context};
+use crate::handler::{self, Context, HEADER_READ_TIMEOUT};
 
 /// Capacidad del canal de eventos. Un suscriptor que se atrasa más que esto recibe `Lagged`.
 const EVENT_CAPACITY: usize = 1024;
-/// Tiempo máximo para recibir los headers de un request (corta conexiones colgadas / slowloris).
-const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(30);
 /// Pausa tras un error de `accept` (p. ej. sin descriptores libres) para no girar en vacío.
 const ACCEPT_BACKOFF: Duration = Duration::from_millis(50);
 
@@ -42,7 +40,7 @@ impl Proxy {
         let listener = TcpListener::bind(config.listen).await?;
         let local_addr = listener.local_addr()?;
         let (events, _) = broadcast::channel(EVENT_CAPACITY);
-        let ctx = Arc::new(Context::new(local_addr, events.clone()));
+        let ctx = Arc::new(Context::new(&config, local_addr, events.clone())?);
         let (shutdown, stop) = oneshot::channel();
         let accept_loop = tokio::spawn(accept_loop(listener, ctx, stop));
         Ok(Self {

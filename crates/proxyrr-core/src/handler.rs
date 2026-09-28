@@ -1,8 +1,10 @@
-//! Manejo de un request: reenvío HTTP, túnel `CONNECT` y respuestas de error propias.
+//! Manejo de un request: reenvío HTTP, túnel `CONNECT` (opaco o descifrado) y respuestas de error propias.
 
 use std::convert::Infallible;
 use std::error::Error as StdError;
+use std::io;
 use std::net::{IpAddr, SocketAddr};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
@@ -11,20 +13,39 @@ use http_body_util::combinators::BoxBody;
 use http_body_util::{BodyExt, Empty, Full};
 use hyper::body::Incoming;
 use hyper::header::{CONNECTION, CONTENT_LENGTH, CONTENT_TYPE, HeaderMap, HeaderValue};
+use hyper::http::uri::PathAndQuery;
+use hyper::server::conn::http1;
+use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode, Uri, Version};
+use hyper_rustls::{HttpsConnector, HttpsConnectorBuilder};
 use hyper_util::client::legacy::Client;
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
+use rustls::server::Acceptor;
+use rustls::{ClientConfig, RootCertStore};
+use rustls_pki_types::CertificateDer;
+use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
 use tokio::sync::broadcast;
+use tokio::time::timeout;
+use tokio_rustls::LazyConfigAcceptor;
 
+use crate::config::ProxyConfig;
 use crate::event::{FlowEvent, HttpFlow, TunnelFlow};
 use crate::headers::strip_hop_by_hop;
+use crate::mitm::{Mitm, Prefixed, TLS_HANDSHAKE, crypto_provider, describe_client_tls_error};
 
 pub(crate) type ProxyBody = BoxBody<Bytes, hyper::Error>;
+type UpstreamClient = Client<HttpsConnector<HttpConnector>, Incoming>;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(90);
+/// Tiempo máximo para recibir los headers de un request (corta conexiones colgadas / slowloris).
+pub(crate) const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(30);
+/// Espera del primer byte del cliente en un túnel; si no llega, el protocolo es de los que habla
+/// primero el servidor y se tuneliza sin descifrar.
+const FIRST_BYTE_TIMEOUT: Duration = Duration::from_secs(5);
+const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Estado compartido por todas las conexiones de una instancia.
 #[derive(Debug)]
@@ -32,24 +53,36 @@ pub(crate) struct Context {
     local_addr: SocketAddr,
     events: broadcast::Sender<FlowEvent>,
     next_id: AtomicU64,
-    client: Client<HttpConnector, Incoming>,
+    client: UpstreamClient,
+    mitm: Option<Mitm>,
 }
 
 impl Context {
-    pub(crate) fn new(local_addr: SocketAddr, events: broadcast::Sender<FlowEvent>) -> Self {
-        let mut connector = HttpConnector::new();
-        connector.set_connect_timeout(Some(CONNECT_TIMEOUT));
-        connector.set_nodelay(true);
+    pub(crate) fn new(
+        config: &ProxyConfig,
+        local_addr: SocketAddr,
+        events: broadcast::Sender<FlowEvent>,
+    ) -> io::Result<Self> {
+        let mut http = HttpConnector::new();
+        http.set_connect_timeout(Some(CONNECT_TIMEOUT));
+        http.set_nodelay(true);
+        http.enforce_http(false);
+        let connector = HttpsConnectorBuilder::new()
+            .with_tls_config(upstream_tls(&config.upstream_roots)?)
+            .https_or_http()
+            .enable_http1()
+            .wrap_connector(http);
         let client = Client::builder(TokioExecutor::new())
             .pool_idle_timeout(POOL_IDLE_TIMEOUT)
             .pool_timer(TokioTimer::new())
             .build(connector);
-        Self {
+        Ok(Self {
             local_addr,
             events,
             next_id: AtomicU64::new(1),
             client,
-        }
+            mitm: config.mitm.as_ref().map(Mitm::new),
+        })
     }
 
     fn next_id(&self) -> u64 {
@@ -60,6 +93,23 @@ impl Context {
         // Sin suscriptores `send` falla; no es un error del proxy.
         let _ = self.events.send(event);
     }
+}
+
+/// TLS hacia los orígenes: raíces del SO + las extra de la configuración. El ALPN (solo HTTP/1.1)
+/// lo fija `HttpsConnectorBuilder::enable_http1`, que exige recibirlo vacío.
+fn upstream_tls(extra_roots: &[Vec<u8>]) -> io::Result<ClientConfig> {
+    let mut roots = RootCertStore::empty();
+    // Un certificado del SO que no se puede interpretar se ignora; el resto sirve igual.
+    roots.add_parsable_certificates(rustls_native_certs::load_native_certs().certs);
+    roots.add_parsable_certificates(
+        extra_roots
+            .iter()
+            .map(|der| CertificateDer::from(der.clone())),
+    );
+    ClientConfig::builder_with_provider(crypto_provider())
+        .with_safe_default_protocol_versions()
+        .map_err(io::Error::other)
+        .map(|builder| builder.with_root_certificates(roots).with_no_client_auth())
 }
 
 /// Rechazo generado por el proxy (no por el origen).
@@ -82,40 +132,75 @@ impl Reject {
     }
 }
 
+/// Destino validado de un `CONNECT`.
+#[derive(Debug, Clone)]
+struct Target {
+    host: String,
+    port: u16,
+    authority: String,
+}
+
+impl Target {
+    /// Base de las URLs de los requests descifrados: sin `:443` cuando es el puerto por defecto.
+    fn base_url(&self) -> String {
+        if self.port == 443 {
+            format!("https://{}", self.host)
+        } else {
+            format!("https://{}:{}", self.host, self.port)
+        }
+    }
+}
+
+/// Datos para emitir el evento de un túnel cuando se sepa cómo terminó.
+#[derive(Debug)]
+struct TunnelLog {
+    id: u64,
+    authority: String,
+    started: Instant,
+}
+
+impl TunnelLog {
+    fn emit(&self, ctx: &Context, status: StatusCode, error: Option<String>, intercepted: bool) {
+        ctx.emit(FlowEvent::Tunnel(TunnelFlow {
+            id: self.id,
+            authority: self.authority.clone(),
+            status: status.as_u16(),
+            intercepted,
+            error,
+            elapsed: self.started.elapsed(),
+        }));
+    }
+}
+
 pub(crate) async fn handle(
     req: Request<Incoming>,
-    ctx: &Context,
+    ctx: &Arc<Context>,
 ) -> Result<Response<ProxyBody>, Infallible> {
     Ok(if req.method() == Method::CONNECT {
         tunnel(req, ctx).await
     } else {
-        forward(req, ctx).await
+        let check = check_http_target(req.uri(), ctx.local_addr);
+        exchange(req, ctx, check).await
     })
 }
 
-async fn send_upstream(
-    mut req: Request<Incoming>,
+/// Reenvía un request al origen (ya validado por `check`) y emite su evento.
+async fn exchange(
+    req: Request<Incoming>,
     ctx: &Context,
-) -> Result<Response<Incoming>, Reject> {
-    check_http_target(req.uri(), ctx.local_addr)?;
-    strip_hop_by_hop(req.headers_mut());
-    // El cliente upstream habla HTTP/1.1 aunque el navegador haya venido en 1.0.
-    *req.version_mut() = Version::HTTP_11;
-    ctx.client.request(req).await.map_err(|e| {
-        Reject::new(
-            StatusCode::BAD_GATEWAY,
-            format!("ProxyRR no pudo llegar al origen: {}", error_chain(&e)),
-        )
-    })
-}
-
-async fn forward(req: Request<Incoming>, ctx: &Context) -> Response<ProxyBody> {
+    check: Result<(), Reject>,
+) -> Response<ProxyBody> {
     let id = ctx.next_id();
     let started = Instant::now();
     let method = req.method().to_string();
     let url = req.uri().to_string();
 
-    let (response, error) = match send_upstream(req, ctx).await {
+    let outcome = if let Err(reject) = check {
+        Err(reject)
+    } else {
+        send_upstream(req, ctx).await
+    };
+    let (response, error) = match outcome {
         Ok(mut response) => {
             strip_hop_by_hop(response.headers_mut());
             (response.map(BodyExt::boxed), None)
@@ -134,41 +219,153 @@ async fn forward(req: Request<Incoming>, ctx: &Context) -> Response<ProxyBody> {
     response
 }
 
-async fn tunnel(req: Request<Incoming>, ctx: &Context) -> Response<ProxyBody> {
-    let id = ctx.next_id();
-    let started = Instant::now();
-    let authority = req.uri().to_string();
+async fn send_upstream(
+    mut req: Request<Incoming>,
+    ctx: &Context,
+) -> Result<Response<Incoming>, Reject> {
+    strip_hop_by_hop(req.headers_mut());
+    // El cliente upstream habla HTTP/1.1 aunque el navegador haya venido en 1.0.
+    *req.version_mut() = Version::HTTP_11;
+    ctx.client.request(req).await.map_err(|e| {
+        Reject::new(
+            StatusCode::BAD_GATEWAY,
+            format!("ProxyRR no pudo llegar al origen: {}", error_chain(&e)),
+        )
+    })
+}
 
-    let outcome = connect_tunnel(req.uri(), &authority, ctx.local_addr).await;
-    let elapsed = started.elapsed();
-
-    let (response, error) = match outcome {
-        Ok(upstream) => {
-            tokio::spawn(splice(req, upstream));
-            let mut response = Response::new(empty());
-            *response.status_mut() = StatusCode::OK;
-            (response, None)
-        }
-        Err(reject) => (reject.response(), Some(reject.message)),
+async fn tunnel(req: Request<Incoming>, ctx: &Arc<Context>) -> Response<ProxyBody> {
+    let log = TunnelLog {
+        id: ctx.next_id(),
+        authority: req.uri().to_string(),
+        started: Instant::now(),
     };
-    ctx.emit(FlowEvent::Tunnel(TunnelFlow {
-        id,
-        authority,
-        status: response.status().as_u16(),
-        error,
-        elapsed,
-    }));
+    let target = match check_tunnel_target(req.uri(), ctx.local_addr) {
+        Ok(target) => target,
+        Err(reject) => return tunnel_rejected(ctx, &log, reject),
+    };
+
+    if let Some(mitm) = &ctx.mitm
+        && !mitm.is_bypassed(&target.host)
+    {
+        // Con MITM se responde enseguida: qué hacer se decide al ver el primer byte del cliente.
+        tokio::spawn(intercept(req, Arc::clone(ctx), target, log));
+        return ok_empty();
+    }
+
+    // Túnel opaco: se conecta ANTES de responder, para poder devolver 502/504.
+    match connect_upstream(&target.authority).await {
+        Ok(upstream) => {
+            log.emit(ctx, StatusCode::OK, None, false);
+            tokio::spawn(splice_upgrade(req, upstream));
+            ok_empty()
+        }
+        Err(reject) => tunnel_rejected(ctx, &log, reject),
+    }
+}
+
+fn tunnel_rejected(ctx: &Context, log: &TunnelLog, reject: Reject) -> Response<ProxyBody> {
+    let response = reject.response();
+    log.emit(ctx, reject.status, Some(reject.message), false);
     response
 }
 
-/// Conecta con el destino del CONNECT. Se hace ANTES de responder, para poder devolver 502/504.
-async fn connect_tunnel(
-    uri: &Uri,
-    authority: &str,
-    local: SocketAddr,
-) -> Result<TcpStream, Reject> {
-    let target = check_tunnel_target(uri, local)?;
-    match tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(target)).await {
+/// Túnel con MITM activo: descifra si el cliente habla TLS; si no, tuneliza sin tocar nada.
+async fn intercept(req: Request<Incoming>, ctx: Arc<Context>, target: Target, log: TunnelLog) {
+    // Si el cliente cortó antes del upgrade no hay nada que hacer.
+    let Ok(upgraded) = hyper::upgrade::on(req).await else {
+        return;
+    };
+    let mut client = TokioIo::new(upgraded);
+    let mut first = [0u8; 1];
+    let prefix = match timeout(FIRST_BYTE_TIMEOUT, client.read(&mut first)).await {
+        Ok(Ok(0) | Err(_)) => return,
+        Ok(Ok(n)) => first[..n].to_vec(),
+        Err(_) => Vec::new(),
+    };
+    let is_tls = prefix.first() == Some(&TLS_HANDSHAKE);
+    let stream = Prefixed::new(prefix, client);
+    let Some(mitm) = ctx.mitm.as_ref().filter(|_| is_tls) else {
+        return splice_stream(stream, &ctx, &target, &log).await;
+    };
+
+    let handshake_failed = |message: String| log.emit(&ctx, StatusCode::OK, Some(message), true);
+    let start = match timeout(
+        TLS_HANDSHAKE_TIMEOUT,
+        LazyConfigAcceptor::new(Acceptor::default(), stream),
+    )
+    .await
+    {
+        Ok(Ok(start)) => start,
+        Ok(Err(e)) => return handshake_failed(format!("ClientHello TLS inválido: {e}")),
+        Err(_) => return handshake_failed("el cliente no completó el handshake TLS".to_owned()),
+    };
+    // Sin SNI (p. ej. destino por IP) la hoja se emite para el host del CONNECT.
+    let leaf_host = start
+        .client_hello()
+        .server_name()
+        .map_or_else(|| target.host.clone(), str::to_owned);
+    let config = match mitm.server_config(&leaf_host) {
+        Ok(config) => config,
+        Err(message) => return handshake_failed(message),
+    };
+    let tls = match timeout(TLS_HANDSHAKE_TIMEOUT, start.into_stream(config)).await {
+        Ok(Ok(tls)) => tls,
+        Ok(Err(e)) => return handshake_failed(describe_client_tls_error(&e)),
+        Err(_) => return handshake_failed("el cliente no completó el handshake TLS".to_owned()),
+    };
+    log.emit(&ctx, StatusCode::OK, None, true);
+
+    let base = target.base_url();
+    let service = service_fn(move |req| {
+        let ctx = Arc::clone(&ctx);
+        let base = base.clone();
+        async move { Ok::<_, Infallible>(decrypted(req, &ctx, &base).await) }
+    });
+    // Los errores de la conexión descifrada (cliente que corta) no afectan al resto.
+    let _ = http1::Builder::new()
+        .timer(TokioTimer::new())
+        .header_read_timeout(HEADER_READ_TIMEOUT)
+        .serve_connection(TokioIo::new(tls), service)
+        .await;
+}
+
+/// Un request dentro del túnel descifrado: llega en forma de origen y va a `https://host[:puerto]`.
+async fn decrypted(mut req: Request<Incoming>, ctx: &Context, base: &str) -> Response<ProxyBody> {
+    let path = req.uri().path_and_query().map_or("/", PathAndQuery::as_str);
+    let check = format!("{base}{path}")
+        .parse::<Uri>()
+        .map(|uri| *req.uri_mut() = uri)
+        .map_err(|_| {
+            Reject::new(
+                StatusCode::BAD_REQUEST,
+                "ProxyRR: URL inválida en el túnel.",
+            )
+        });
+    exchange(req, ctx, check).await
+}
+
+/// Túnel opaco sobre un cliente ya upgradeado (con los bytes que se hayan leído al inspeccionar).
+async fn splice_stream(
+    mut client: Prefixed<TokioIo<hyper::upgrade::Upgraded>>,
+    ctx: &Context,
+    target: &Target,
+    log: &TunnelLog,
+) {
+    match connect_upstream(&target.authority).await {
+        Ok(mut upstream) => {
+            log.emit(ctx, StatusCode::OK, None, false);
+            // Un reset de cualquiera de los lados es el final normal de un túnel.
+            let _ = tokio::io::copy_bidirectional(&mut client, &mut upstream).await;
+        }
+        // El cliente ya recibió 200: solo queda cerrar y registrar el motivo.
+        Err(reject) => log.emit(ctx, reject.status, Some(reject.message), false),
+    }
+}
+
+/// Conecta con el destino de un túnel, con timeout.
+async fn connect_upstream(authority: &str) -> Result<TcpStream, Reject> {
+    match timeout(CONNECT_TIMEOUT, TcpStream::connect(authority)).await {
         Ok(Ok(upstream)) => Ok(upstream),
         Ok(Err(e)) => Err(Reject::new(
             StatusCode::BAD_GATEWAY,
@@ -182,7 +379,7 @@ async fn connect_tunnel(
 }
 
 /// Copia bytes entre el cliente (una vez hecho el upgrade) y el destino hasta que alguno cierre.
-async fn splice(req: Request<Incoming>, mut upstream: TcpStream) {
+async fn splice_upgrade(req: Request<Incoming>, mut upstream: TcpStream) {
     // Si el cliente cortó antes del upgrade no hay nada que copiar.
     if let Ok(upgraded) = hyper::upgrade::on(req).await {
         let mut client = TokioIo::new(upgraded);
@@ -219,8 +416,8 @@ fn check_http_target(uri: &Uri, local: SocketAddr) -> Result<(), Reject> {
     Ok(())
 }
 
-/// Valida el destino de un CONNECT y devuelve el `host:puerto` a conectar.
-fn check_tunnel_target(uri: &Uri, local: SocketAddr) -> Result<String, Reject> {
+/// Valida el destino de un CONNECT.
+fn check_tunnel_target(uri: &Uri, local: SocketAddr) -> Result<Target, Reject> {
     let Some((authority, port)) = uri.authority().and_then(|a| Some((a, a.port_u16()?))) else {
         return Err(Reject::new(
             StatusCode::BAD_REQUEST,
@@ -230,7 +427,11 @@ fn check_tunnel_target(uri: &Uri, local: SocketAddr) -> Result<String, Reject> {
     if is_self(authority.host(), port, local) {
         return Err(loop_detected());
     }
-    Ok(authority.as_str().to_owned())
+    Ok(Target {
+        host: authority.host().to_owned(),
+        port,
+        authority: authority.as_str().to_owned(),
+    })
 }
 
 fn loop_detected() -> Reject {
@@ -284,8 +485,8 @@ fn text_response(status: StatusCode, message: &str) -> Response<ProxyBody> {
     response
 }
 
-fn empty() -> ProxyBody {
-    Empty::new().map_err(|never| match never {}).boxed()
+fn ok_empty() -> Response<ProxyBody> {
+    Response::new(Empty::new().map_err(|never| match never {}).boxed())
 }
 
 #[cfg(test)]
@@ -340,9 +541,15 @@ mod tests {
             StatusCode::BAD_REQUEST
         );
         let ok: Uri = "example.com:443".parse().unwrap();
-        assert_eq!(
-            check_tunnel_target(&ok, local()).unwrap(),
-            "example.com:443"
-        );
+        let target = check_tunnel_target(&ok, local()).unwrap();
+        assert_eq!(target.authority, "example.com:443");
+        assert_eq!(target.base_url(), "https://example.com");
+    }
+
+    #[test]
+    fn base_url_keeps_non_default_port_and_ipv6_brackets() {
+        let uri: Uri = "[::1]:8443".parse().unwrap();
+        let target = check_tunnel_target(&uri, local()).unwrap();
+        assert_eq!(target.base_url(), "https://[::1]:8443");
     }
 }

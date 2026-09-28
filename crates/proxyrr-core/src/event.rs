@@ -10,7 +10,7 @@ use std::time::Duration;
 pub enum FlowEvent {
     /// Request HTTP reenviado (o rechazado) por el proxy.
     Http(HttpFlow),
-    /// Túnel `CONNECT` abierto (o rechazado). El contenido no se descifra.
+    /// Túnel `CONNECT`: opaco, o descifrado si el MITM está activo.
     Tunnel(TunnelFlow),
 }
 
@@ -53,6 +53,8 @@ pub struct TunnelFlow {
     pub authority: String,
     /// `200` si el túnel se abrió; si no, el status de error que devolvió el proxy.
     pub status: u16,
+    /// `true` si el TLS se terminó en el proxy (los requests de adentro llegan como `HttpFlow`).
+    pub intercepted: bool,
     /// Motivo cuando no se abrió.
     pub error: Option<String>,
     /// Tiempo en conectar con el destino.

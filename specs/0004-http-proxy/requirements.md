@@ -1,6 +1,6 @@
 # 0004 — HTTP proxy
 
-- Estado: en curso
+- Estado: terminada (PR #3)
 - Fase: F1
 - Depende de: 0001
 

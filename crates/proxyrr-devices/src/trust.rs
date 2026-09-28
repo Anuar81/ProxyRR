@@ -313,7 +313,9 @@ pub struct SystemRunner;
 
 impl SystemRunner {
     fn command(step: &Step) -> Command {
-        if step.sudo && !is_root() {
+        // `sudo` solo existe en los planes de Linux (Windows y macOS instalan para el usuario, sin
+        // elevación); el `cfg!` lo deja explícito aunque un plan futuro marcara `sudo` por error.
+        if step.sudo && cfg!(target_os = "linux") && !is_root() {
             let mut cmd = Command::new("sudo");
             cmd.arg(&step.program).args(&step.args);
             cmd
@@ -586,6 +588,10 @@ mod tests {
         assert!(
             remove.iter().any(|s| s.args.contains(&f.sha1)),
             "borra por huella"
+        );
+        assert!(
+            install.iter().chain(&remove).all(|s| !s.sudo),
+            "sin sudo en macOS"
         );
     }
 

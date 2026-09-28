@@ -6,4 +6,4 @@
 - [x] T4. Export PEM/DER. Test: `ca::tests::pem_and_der_match` (CA 8).
 - [x] T5. `subject_hash_old`. Tests: `hash::tests::matches_openssl_vector` (fixture generada con OpenSSL), `tests/openssl.rs::matches_openssl_binary` (se saltea si no hay `openssl`) (CA 9).
 - [x] T6. CLI `ca info|export|path` + `--data-dir`. Tests: `proxyrr-cli/tests/ca.rs` (CA 10).
-- [ ] T7. fmt, clippy, test, deny en verde local y en CI. PR. Marcar spec como `terminada`.
+- [x] T7. fmt, clippy, test, deny en verde local y en CI. PR. Marcar spec como `terminada`.

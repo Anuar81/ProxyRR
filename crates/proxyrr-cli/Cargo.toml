@@ -16,6 +16,8 @@ path = "src/main.rs"
 [dependencies]
 clap.workspace = true
 proxyrr-cert.workspace = true
+proxyrr-core.workspace = true
+tokio.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -9,5 +9,16 @@ repository.workspace = true
 authors.workspace = true
 publish.workspace = true
 
+[dependencies]
+base64.workspace = true
+bytes.workspace = true
+proxyrr-cert.workspace = true
+proxyrr-core.workspace = true
+qrcode.workspace = true
+ring.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
 [lints]
 workspace = true

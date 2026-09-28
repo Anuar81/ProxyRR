@@ -1,6 +1,6 @@
 # 0008 — Control API
 
-- Estado: en curso
+- Estado: terminada (PR #6)
 - Fase: F1
 - Depende de: 0005, 0007
 

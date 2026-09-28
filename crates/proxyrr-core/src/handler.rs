@@ -33,6 +33,7 @@ use crate::capture::{Recorder, Side, Tap, headers_vec};
 use crate::config::{FlowIds, ProxyConfig};
 use crate::event::{FlowEvent, HttpFlow, TunnelFlow};
 use crate::headers::strip_hop_by_hop;
+use crate::local::{self, LocalRequest, LocalSite};
 use crate::mitm::{Mitm, Prefixed, TLS_HANDSHAKE, crypto_provider, describe_client_tls_error};
 
 pub(crate) type ProxyBody = BoxBody<Bytes, hyper::Error>;
@@ -56,6 +57,7 @@ pub(crate) struct Context {
     client: UpstreamClient,
     mitm: Option<Mitm>,
     max_body_capture: usize,
+    local_site: Option<Arc<dyn LocalSite>>,
 }
 
 impl Context {
@@ -84,6 +86,7 @@ impl Context {
             client,
             mitm: config.mitm.as_ref().map(Mitm::new),
             max_body_capture: config.max_body_capture,
+            local_site: config.local_site.clone(),
         })
     }
 
@@ -200,17 +203,21 @@ async fn exchange(
     let request_headers = headers_vec(req.headers());
     let req = req.map(|body| Recorder::new(body, Arc::clone(&tap), Side::Request));
 
-    let outcome = if let Err(reject) = check {
+    let outcome = if let Some(response) = local_response(&req, ctx) {
+        // El sitio local va antes que la validación: `/cert` directo no tiene forma absoluta.
+        let headers = headers_vec(response.headers());
+        Ok((response, headers))
+    } else if let Err(reject) = check {
         Err(reject)
     } else {
-        send_upstream(req, ctx).await
-    };
-    let (response, response_headers, error) = match outcome {
-        Ok(mut response) => {
+        send_upstream(req, ctx).await.map(|mut response| {
             let headers = headers_vec(response.headers());
             strip_hop_by_hop(response.headers_mut());
-            (response.map(BodyExt::boxed), headers, None)
-        }
+            (response.map(BodyExt::boxed), headers)
+        })
+    };
+    let (response, response_headers, error) = match outcome {
+        Ok((response, headers)) => (response, headers, None),
         Err(reject) => {
             let response = reject.response();
             let headers = headers_vec(response.headers());
@@ -501,6 +508,42 @@ fn text_response(status: StatusCode, message: &str) -> Response<ProxyBody> {
 
 fn ok_empty() -> Response<ProxyBody> {
     Response::new(Empty::new().map_err(|never| match never {}).boxed())
+}
+
+/// Respuesta del sitio local si el request le corresponde (spec 0006, CA 11–12).
+fn local_response<B>(req: &Request<B>, ctx: &Context) -> Option<Response<ProxyBody>> {
+    let site = ctx.local_site.as_ref()?;
+    let uri = req.uri();
+    let (direct, path) = local::route(
+        uri.authority().map(hyper::http::uri::Authority::host),
+        uri.scheme().is_some(),
+        uri.path(),
+    )?;
+    let user_agent = req
+        .headers()
+        .get(hyper::header::USER_AGENT)
+        .and_then(|v| v.to_str().ok());
+    let local = site.respond(&LocalRequest {
+        direct,
+        path,
+        user_agent,
+    });
+    let mut response = Response::new(
+        Full::new(local.body)
+            .map_err(|never| match never {})
+            .boxed(),
+    );
+    *response.status_mut() = StatusCode::from_u16(local.status).unwrap_or(StatusCode::OK);
+    let headers = response.headers_mut();
+    for (name, value) in &local.headers {
+        if let (Ok(name), Ok(value)) = (
+            hyper::header::HeaderName::from_bytes(name.as_bytes()),
+            HeaderValue::from_str(value),
+        ) {
+            headers.append(name, value);
+        }
+    }
+    Some(response)
 }
 
 #[cfg(test)]

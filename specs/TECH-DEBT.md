@@ -16,6 +16,8 @@ Cada entrada: id, origen, qué pasa, por qué importa, propuesta. Al pagarla: `P
 | TD-006 | 0004 | abierta |
 | TD-007 | 0005 | abierta |
 | TD-008 | 0005 | abierta |
+| TD-009 | 0006 | abierta |
+| TD-010 | 0006 | abierta |
 
 ## TD-001 — Timeout de conexión al origen de 10 s
 
@@ -85,3 +87,21 @@ Cada entrada: id, origen, qué pasa, por qué importa, propuesta. Al pagarla: `P
   reconstruye por conexión. Es barato, pero se repite en cada túnel.
 - **Propuesta:** cachear `Arc<ServerConfig>` (o `Arc<CertifiedKey>` con un `ResolvesServerCert`) por host,
   con la misma LRU. Medir antes: si no aparece en un perfil, cerrar como no-deuda.
+
+## TD-009 — Instalar la CA en macOS y Linux no se ejecutó nunca de verdad
+
+- **Origen:** 0006.
+- **Qué pasa:** los planes de `ca install|uninstall` se prueban por SO (unitarios) y el `--dry-run`/`status`
+  corre en los 3 SO del CI, pero instalar de verdad solo se puede probar a mano (cambia el almacén de la
+  máquina). En Windows el plan es el mismo `certutil -user -addstore Root` ya usado en la 0005. En macOS las
+  flags de `security verify-cert` (`-p ssl -L`) y en Linux la ruta NSS no se corrieron contra un equipo real.
+- **Propuesta:** probarlo a mano en una Mac y un Ubuntu (o en un job de CI efímero que sí puede tocar su
+  propio almacén: los runners se descartan) y ajustar lo que falle.
+
+## TD-010 — `https://proxyrr.cert` sin `--mitm` da 502
+
+- **Origen:** 0006.
+- **Qué pasa:** la página se sirve por HTTP plano, y por HTTPS solo con MITM activo (el túnel sin descifrar
+  intenta conectar a un host que no existe). Un navegador que fuerza HTTPS muestra error en vez de la página.
+- **Propuesta:** con un `CONNECT proxyrr.cert:443` y sin MITM, terminar el TLS igual con una hoja de la CA
+  solo para ese host (el navegador avisará que no confía, pero con un mensaje que explica qué hacer).

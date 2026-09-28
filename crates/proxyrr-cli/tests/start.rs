@@ -35,8 +35,11 @@ fn start_origin() -> String {
 
 #[test]
 fn start_prints_address_and_logs_requests() {
+    let data = tempfile::tempdir().unwrap();
     let child = Command::new(env!("CARGO_BIN_EXE_proxyrr"))
         .args(["start", "--listen", "127.0.0.1:0"])
+        .arg("--data-dir")
+        .arg(data.path())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -93,8 +96,11 @@ fn start_prints_address_and_logs_requests() {
 
 #[test]
 fn non_loopback_listen_warns() {
+    let data = tempfile::tempdir().unwrap();
     let child = Command::new(env!("CARGO_BIN_EXE_proxyrr"))
         .args(["start", "--listen", "0.0.0.0:0"])
+        .arg("--data-dir")
+        .arg(data.path())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
@@ -115,10 +121,13 @@ fn non_loopback_listen_warns() {
 
 #[test]
 fn busy_port_fails_with_clear_error() {
+    let data = tempfile::tempdir().unwrap();
     let taken = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = taken.local_addr().unwrap().to_string();
     let output = Command::new(env!("CARGO_BIN_EXE_proxyrr"))
         .args(["start", "--listen", &addr])
+        .arg("--data-dir")
+        .arg(data.path())
         .output()
         .unwrap();
     assert!(!output.status.success());

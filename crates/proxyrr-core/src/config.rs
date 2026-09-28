@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use proxyrr_cert::CertificateAuthority;
 
 use crate::capture::DEFAULT_MAX_BODY_CAPTURE;
+use crate::local::LocalSite;
 
 /// Puerto por defecto (el mismo que usan otras herramientas del rubro, así las guías coinciden).
 pub const DEFAULT_PORT: u16 = 9090;
@@ -28,6 +29,9 @@ pub struct ProxyConfig {
     /// Contador de ids de flujo. Compartir el mismo entre varias instancias (reinicios) garantiza ids
     /// únicos aunque una instancia vieja siga cerrando conexiones.
     pub flow_ids: FlowIds,
+    /// Sitio que el proxy responde él mismo (`http://proxyrr.cert/` y `/cert` directo). `None`: esos
+    /// requests se tratan como cualquier otro.
+    pub local_site: Option<Arc<dyn LocalSite>>,
 }
 
 /// Contador de ids de flujo, compartible entre instancias del proxy. Empieza en 1.
@@ -55,6 +59,7 @@ impl Default for ProxyConfig {
             upstream_roots: Vec::new(),
             max_body_capture: DEFAULT_MAX_BODY_CAPTURE,
             flow_ids: FlowIds::default(),
+            local_site: None,
         }
     }
 }

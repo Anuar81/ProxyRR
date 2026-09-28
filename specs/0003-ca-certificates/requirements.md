@@ -1,6 +1,6 @@
 # 0003 — CA certificates
 
-- Estado: en curso
+- Estado: terminada (PR #2)
 - Fase: F1
 - Depende de: 0001
 

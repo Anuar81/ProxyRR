@@ -22,6 +22,7 @@ const LIMIT: Duration = Duration::from_secs(10);
 async fn start_proxy() -> Proxy {
     Proxy::start(ProxyConfig {
         listen: "127.0.0.1:0".parse().unwrap(),
+        ..ProxyConfig::default()
     })
     .await
     .unwrap()
@@ -369,6 +370,10 @@ async fn shutdown_releases_the_port() {
     let addr = proxy.local_addr();
     proxy.shutdown().await;
     // Si el listener sigue vivo, volver a escuchar en el mismo puerto fallaría.
-    let again = Proxy::start(ProxyConfig { listen: addr }).await;
+    let again = Proxy::start(ProxyConfig {
+        listen: addr,
+        ..ProxyConfig::default()
+    })
+    .await;
     assert!(again.is_ok(), "{again:?}");
 }

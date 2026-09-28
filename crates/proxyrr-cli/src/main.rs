@@ -1,14 +1,16 @@
 //! `proxyrr`: interfaz de línea de comandos de ProxyRR.
 
+use std::fmt::Write as _;
 use std::fs;
 use std::io::{self, Write};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
 use proxyrr_cert::{CA_CERT_FILE, CertificateAuthority};
-use proxyrr_core::{FlowEvent, Proxy, ProxyConfig};
+use proxyrr_core::{FlowEvent, MitmConfig, Proxy, ProxyConfig};
 use tokio::sync::broadcast::error::RecvError;
 
 /// Proxy HTTP(S) de depuración multiplataforma.
@@ -30,6 +32,12 @@ enum Command {
         /// Dirección de escucha. Usá 0.0.0.0:9090 para aceptar dispositivos de tu red.
         #[arg(long, value_name = "IP:PUERTO", default_value_t = ProxyConfig::default().listen)]
         listen: SocketAddr,
+        /// Descifrar HTTPS con la CA de ProxyRR (hay que instalarla como raíz de confianza).
+        #[arg(long)]
+        mitm: bool,
+        /// Host que no se descifra (repetible): `example.com` o `*.example.com` para subdominios.
+        #[arg(long, value_name = "HOST", requires = "mitm")]
+        bypass: Vec<String>,
     },
     /// Autoridad certificante de ProxyRR.
     #[command(subcommand)]
@@ -72,35 +80,55 @@ fn run(cli: Cli) -> Result<(), String> {
         );
         return Ok(());
     };
+    let data_dir = cli.data_dir;
     match command {
-        Command::Start { listen } => run_start(listen),
-        Command::Ca(ca) => {
-            let data_dir = match cli.data_dir {
-                Some(dir) => dir,
-                None => default_data_dir()?,
+        Command::Start {
+            listen,
+            mitm,
+            bypass,
+        } => {
+            let mitm = if mitm {
+                let ca = load(&resolve_data_dir(data_dir)?)?;
+                let mut config = MitmConfig::new(Arc::new(ca));
+                config.bypass = bypass;
+                Some(config)
+            } else {
+                None
             };
-            run_ca(ca, &data_dir)
+            run_start(ProxyConfig {
+                listen,
+                mitm,
+                ..ProxyConfig::default()
+            })
         }
+        Command::Ca(ca) => run_ca(ca, &resolve_data_dir(data_dir)?),
     }
 }
 
-fn run_start(listen: SocketAddr) -> Result<(), String> {
+fn resolve_data_dir(explicit: Option<PathBuf>) -> Result<PathBuf, String> {
+    explicit.map_or_else(default_data_dir, Ok)
+}
+
+fn run_start(config: ProxyConfig) -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .map_err(|e| format!("no se pudo iniciar el runtime: {e}"))?;
+    let listen = config.listen;
+    let mitm_banner = config.mitm.as_ref().map(mitm_banner).transpose()?;
     runtime.block_on(async move {
-        let proxy = Proxy::start(ProxyConfig { listen })
+        let proxy = Proxy::start(config)
             .await
             .map_err(|e| format!("no se pudo escuchar en {listen}: {e}"))?;
         // Suscribir antes de anunciar la dirección: no se pierde ningún flujo.
         let mut events = proxy.subscribe();
         let addr = proxy.local_addr();
         println!("ProxyRR escuchando en {addr} (Ctrl+C para salir)");
-        println!(
-            "Configurá {addr} como proxy HTTP y HTTPS en tu navegador o SO. \
-             HTTPS pasa por túnel sin descifrar (el descifrado llega en la spec https-mitm)."
-        );
+        println!("Configurá {addr} como proxy HTTP y HTTPS en tu navegador o SO.");
+        match &mitm_banner {
+            Some(banner) => println!("{banner}"),
+            None => println!("HTTPS pasa por túnel sin descifrar; usá --mitm para descifrarlo."),
+        }
         if !addr.ip().is_loopback() {
             eprintln!(
                 "aviso: el proxy escucha fuera de loopback; cualquiera en tu red puede usarlo."
@@ -113,7 +141,11 @@ fn run_start(listen: SocketAddr) -> Result<(), String> {
             tokio::select! {
                 _ = &mut ctrl_c => break,
                 event = events.recv() => match event {
-                    Ok(event) => println!("{}", format_event(&event)),
+                    Ok(event) => {
+                        if let Some(line) = format_event(&event) {
+                            println!("{line}");
+                        }
+                    }
                     Err(RecvError::Lagged(n)) => eprintln!("aviso: se omitieron {n} eventos"),
                     Err(RecvError::Closed) => break,
                 },
@@ -125,8 +157,24 @@ fn run_start(listen: SocketAddr) -> Result<(), String> {
     })
 }
 
-/// Una línea por flujo: `#id  MÉTODO  status  destino  tiempo  tamaño|error`.
-fn format_event(event: &FlowEvent) -> String {
+/// Texto de arranque con MITM: qué CA se usa y cómo instalarla.
+fn mitm_banner(mitm: &MitmConfig) -> Result<String, String> {
+    let info = mitm.ca.info().map_err(|e| e.to_string())?;
+    let mut banner = format!(
+        "Descifrando HTTPS con la CA {} (SHA-256 {}).\n\
+         Si el navegador da error de certificado, instalá la CA como raíz de confianza: \
+         `proxyrr ca export --out ca.pem`.",
+        info.subject, info.sha256_fingerprint
+    );
+    if !mitm.bypass.is_empty() {
+        let _ = write!(banner, "\nSin descifrar: {}", mitm.bypass.join(", "));
+    }
+    Ok(banner)
+}
+
+/// Una línea por flujo: `#id  MÉTODO  status  destino  tiempo  tamaño|error`. Los túneles descifrados
+/// sin error no se muestran: sus requests ya aparecen como `https://…`.
+fn format_event(event: &FlowEvent) -> Option<String> {
     let (id, method, status, target, elapsed, extra) = match event {
         FlowEvent::Http(flow) => (
             flow.id,
@@ -139,6 +187,7 @@ fn format_event(event: &FlowEvent) -> String {
                 .or_else(|| flow.content_length.map(format_size))
                 .unwrap_or_default(),
         ),
+        FlowEvent::Tunnel(flow) if flow.intercepted && flow.error.is_none() => return None,
         FlowEvent::Tunnel(flow) => (
             flow.id,
             "CONNECT",
@@ -150,12 +199,11 @@ fn format_event(event: &FlowEvent) -> String {
                 .unwrap_or_else(|| "túnel sin descifrar".to_owned()),
         ),
     };
-    format!(
+    let line = format!(
         "#{id:<5} {method:<7} {status}  {target}  {} ms  {extra}",
         elapsed.as_millis()
-    )
-    .trim_end()
-    .to_owned()
+    );
+    Some(line.trim_end().to_owned())
 }
 
 fn format_size(bytes: u64) -> String {
@@ -259,19 +307,37 @@ mod tests {
             content_length: Some(2048),
         });
         assert_eq!(
-            format_event(&http),
-            "#7     GET     200  http://example.com/  42 ms  2.0 KB"
+            format_event(&http).as_deref(),
+            Some("#7     GET     200  http://example.com/  42 ms  2.0 KB")
         );
         let tunnel = FlowEvent::Tunnel(TunnelFlow {
             id: 8,
             authority: "example.com:443".into(),
             status: 502,
+            intercepted: false,
             error: Some("sin conexión".into()),
             elapsed: Duration::from_millis(3),
         });
         assert_eq!(
-            format_event(&tunnel),
-            "#8     CONNECT 502  example.com:443  3 ms  sin conexión"
+            format_event(&tunnel).as_deref(),
+            Some("#8     CONNECT 502  example.com:443  3 ms  sin conexión")
         );
+    }
+
+    #[test]
+    fn hides_successful_intercepted_tunnels_only() {
+        let tunnel = |error: Option<&str>| {
+            FlowEvent::Tunnel(TunnelFlow {
+                id: 1,
+                authority: "example.com:443".into(),
+                status: 200,
+                intercepted: true,
+                error: error.map(Into::into),
+                elapsed: Duration::from_millis(1),
+            })
+        };
+        assert_eq!(format_event(&tunnel(None)), None);
+        let failed = format_event(&tunnel(Some("el cliente no confía en la CA"))).unwrap();
+        assert!(failed.contains("no confía en la CA"), "{failed}");
     }
 }

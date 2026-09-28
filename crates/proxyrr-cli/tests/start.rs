@@ -125,3 +125,57 @@ fn busy_port_fails_with_clear_error() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("no se pudo escuchar"), "{stderr}");
 }
+
+#[test]
+fn mitm_uses_ca_from_data_dir_and_shows_fingerprint() {
+    let data = tempfile::tempdir().unwrap();
+    let child = Command::new(env!("CARGO_BIN_EXE_proxyrr"))
+        .args(["start", "--listen", "127.0.0.1:0", "--mitm", "--bypass"])
+        .arg("*.apple.com")
+        .arg("--data-dir")
+        .arg(data.path())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut running = Running(child);
+    let stdout = running.0.stdout.take().unwrap();
+    let (tx, lines) = mpsc::channel();
+    thread::spawn(move || {
+        for line in BufReader::new(stdout).lines() {
+            if tx.send(line.unwrap()).is_err() {
+                break;
+            }
+        }
+    });
+    let mut seen = Vec::new();
+    while !seen.iter().any(|l: &String| l.starts_with("Sin descifrar")) {
+        seen.push(
+            lines
+                .recv_timeout(LIMIT)
+                .expect("faltan líneas de arranque"),
+        );
+    }
+    let banner = seen.join("\n");
+    assert!(
+        banner.contains("Descifrando HTTPS con la CA CN=ProxyRR CA ("),
+        "{banner}"
+    );
+    assert!(banner.contains("SHA-256"), "{banner}");
+    assert!(banner.contains("*.apple.com"), "{banner}");
+    assert!(
+        data.path().join("ca.pem").exists(),
+        "la CA debe crearse en --data-dir"
+    );
+}
+
+#[test]
+fn bypass_requires_mitm() {
+    let output = Command::new(env!("CARGO_BIN_EXE_proxyrr"))
+        .args(["start", "--bypass", "example.com"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("--mitm"), "{stderr}");
+}

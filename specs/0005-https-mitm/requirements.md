@@ -1,6 +1,6 @@
 # 0005 — HTTPS MITM
 
-- Estado: en curso
+- Estado: terminada (PR #4)
 - Fase: F1
 - Depende de: 0003, 0004
 

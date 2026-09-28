@@ -9,7 +9,7 @@ Cada entrada: id, origen, qué pasa, por qué importa, propuesta. Al pagarla: `P
 | Id | Origen | Estado |
 |----|--------|--------|
 | TD-001 | 0004 | abierta |
-| TD-002 | 0004 | abierta |
+| TD-002 | 0004 | pagada en 0007 |
 | TD-003 | 0004 | abierta |
 | TD-004 | 0004 | abierta |
 | TD-005 | 0001 | abierta |
@@ -32,6 +32,8 @@ Cada entrada: id, origen, qué pasa, por qué importa, propuesta. Al pagarla: `P
 - **Qué pasa:** respuestas chunked o sin `Content-Length` no muestran tamaño.
 - **Propuesta:** contar bytes reales con un body envolvente. Probablemente se paga sola en `flow-store`
   al capturar los bodies.
+- **Pagada en 0007:** `CapturedBody.size` cuenta los bytes reales y `FlowSummary.response_size` lo usa.
+  El CLI sigue mostrando el `Content-Length` porque imprime al llegar los headers; la app y la API usan el real.
 
 ## TD-003 — Detección de loop sin DNS
 

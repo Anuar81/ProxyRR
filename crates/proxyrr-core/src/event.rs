@@ -5,11 +5,19 @@
 
 use std::time::Duration;
 
+use bytes::Bytes;
+
+/// Lista de headers en el orden en que viajaron, con repetidos. Los valores que no son UTF-8 se
+/// convierten con reemplazo.
+pub type Headers = Vec<(String, String)>;
+
 /// Un flujo observado por el proxy.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FlowEvent {
-    /// Request HTTP reenviado (o rechazado) por el proxy.
+    /// Request HTTP reenviado (o rechazado) por el proxy, al tener los headers de la respuesta.
     Http(HttpFlow),
+    /// Bodies de un `Http` ya emitido (mismo id), cuando terminaron los dos. Siempre llega después.
+    HttpBodies(HttpBodies),
     /// Túnel `CONNECT`: opaco, o descifrado si el MITM está activo.
     Tunnel(TunnelFlow),
 }
@@ -20,12 +28,13 @@ impl FlowEvent {
     pub fn id(&self) -> u64 {
         match self {
             Self::Http(flow) => flow.id,
+            Self::HttpBodies(bodies) => bodies.id,
             Self::Tunnel(flow) => flow.id,
         }
     }
 }
 
-/// Resumen de un request HTTP.
+/// Request HTTP y los headers de su respuesta.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HttpFlow {
     /// Id incremental.
@@ -34,14 +43,44 @@ pub struct HttpFlow {
     pub method: String,
     /// URL tal como la pidió el cliente (forma absoluta si es válida).
     pub url: String,
+    /// Headers del request tal como los mandó el cliente.
+    pub request_headers: Headers,
     /// Status devuelto al cliente: el del origen, o el que generó el proxy (400/502/508).
     pub status: u16,
+    /// Headers de la respuesta tal como los mandó el origen (o el proxy, si la generó él).
+    pub response_headers: Headers,
     /// Motivo cuando el status lo generó el proxy por un error.
     pub error: Option<String>,
     /// Tiempo hasta tener los headers de la respuesta.
     pub elapsed: Duration,
-    /// `Content-Length` de la respuesta, si el origen lo declaró.
+    /// `Content-Length` de la respuesta, si se declaró.
     pub content_length: Option<u64>,
+}
+
+/// Bodies capturados de un flujo HTTP.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HttpBodies {
+    /// Id del `HttpFlow` al que pertenecen.
+    pub id: u64,
+    /// Body del request.
+    pub request: CapturedBody,
+    /// Body de la respuesta.
+    pub response: CapturedBody,
+    /// Tiempo desde que llegó el request hasta que terminaron los dos bodies.
+    pub duration: Duration,
+}
+
+/// Un body capturado. Los bytes son los que viajaron (sin descomprimir).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CapturedBody {
+    /// Bytes guardados (hasta el límite de captura).
+    pub data: Bytes,
+    /// Tamaño real que pasó por el proxy, aunque se haya truncado.
+    pub size: u64,
+    /// `true` si `data` tiene menos bytes que `size`.
+    pub truncated: bool,
+    /// `false` si el body se cortó antes de terminar (cliente u origen que cerraron).
+    pub complete: bool,
 }
 
 /// Resumen de un túnel `CONNECT`.

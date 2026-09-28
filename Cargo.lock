@@ -737,6 +737,11 @@ version = "0.1.0"
 [[package]]
 name = "proxyrr-store"
 version = "0.1.0"
+dependencies = [
+ "bytes",
+ "proxyrr-core",
+ "tokio",
+]
 
 [[package]]
 name = "quote"

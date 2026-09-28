@@ -12,7 +12,7 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
-use proxyrr_core::{FlowEvent, Proxy, ProxyConfig};
+use proxyrr_core::{FlowEvent, HttpBodies, HttpFlow, Proxy, ProxyConfig};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::time::timeout;
@@ -128,6 +128,22 @@ async fn send(proxy: SocketAddr, request: &str) -> Reply {
 
 async fn next_event(events: &mut tokio::sync::broadcast::Receiver<FlowEvent>) -> FlowEvent {
     timeout(LIMIT, events.recv()).await.unwrap().unwrap()
+}
+
+async fn next_http(events: &mut tokio::sync::broadcast::Receiver<FlowEvent>) -> HttpFlow {
+    loop {
+        if let FlowEvent::Http(flow) = next_event(events).await {
+            return flow;
+        }
+    }
+}
+
+async fn next_bodies(events: &mut tokio::sync::broadcast::Receiver<FlowEvent>) -> HttpBodies {
+    loop {
+        if let FlowEvent::HttpBodies(bodies) = next_event(events).await {
+            return bodies;
+        }
+    }
 }
 
 fn get(url: &str, host: &str) -> String {
@@ -288,12 +304,10 @@ async fn emits_events_with_incremental_ids() {
     for _ in 0..2 {
         send(proxy.local_addr(), &get(&url, &origin.to_string())).await;
     }
-    let first = next_event(&mut events).await;
-    let second = next_event(&mut events).await;
-    assert_eq!((first.id(), second.id()), (1, 2));
-    let FlowEvent::Http(flow) = first else {
-        panic!("se esperaba un evento HTTP");
-    };
+    let first = next_http(&mut events).await;
+    let second = next_http(&mut events).await;
+    assert_eq!((first.id, second.id), (1, 2));
+    let flow = first;
     assert_eq!(flow.method, "GET");
     assert_eq!(flow.url, url);
     assert_eq!(flow.status, 200);
@@ -376,4 +390,181 @@ async fn shutdown_releases_the_port() {
     })
     .await;
     assert!(again.is_ok(), "{again:?}");
+}
+
+// ---- Captura (spec 0007) ----
+
+fn header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
+    headers
+        .iter()
+        .find(|(n, _)| n.eq_ignore_ascii_case(name))
+        .map(|(_, v)| v.as_str())
+}
+
+#[tokio::test]
+async fn captures_headers_and_bodies() {
+    let origin = start_origin().await;
+    let proxy = start_proxy().await;
+    let mut events = proxy.subscribe();
+    let reply = send(
+        proxy.local_addr(),
+        &format!(
+            "POST http://{origin}/cap HTTP/1.1\r\nHost: {origin}\r\nX-Custom: abc\r\n\
+             Content-Length: 10\r\nConnection: close\r\n\r\nhola mundo"
+        ),
+    )
+    .await;
+    let flow = next_http(&mut events).await;
+    // Headers tal como viajaron: los del cliente y los del origen, antes de quitar hop-by-hop.
+    assert_eq!(header(&flow.request_headers, "x-custom"), Some("abc"));
+    assert_eq!(header(&flow.request_headers, "connection"), Some("close"));
+    assert_eq!(header(&flow.response_headers, "x-origin"), Some("yes"));
+    assert_eq!(
+        header(&flow.response_headers, "keep-alive"),
+        Some("timeout=5")
+    );
+
+    let bodies = next_bodies(&mut events).await;
+    assert_eq!(bodies.id, flow.id);
+    assert_eq!(bodies.request.data, "hola mundo");
+    assert_eq!(bodies.request.size, 10);
+    assert!(bodies.request.complete);
+    assert_eq!(bodies.response.data, reply.body.as_bytes());
+    assert_eq!(bodies.response.size, reply.body.len() as u64);
+    assert!(bodies.response.complete);
+    assert!(!bodies.response.truncated);
+}
+
+#[tokio::test]
+async fn truncates_capture_but_forwards_everything() {
+    let origin = start_origin().await;
+    let proxy = Proxy::start(ProxyConfig {
+        listen: "127.0.0.1:0".parse().unwrap(),
+        max_body_capture: 4,
+        ..ProxyConfig::default()
+    })
+    .await
+    .unwrap();
+    let mut events = proxy.subscribe();
+    let reply = send(
+        proxy.local_addr(),
+        &format!(
+            "POST http://{origin}/big HTTP/1.1\r\nHost: {origin}\r\nContent-Length: 10\r\n\
+             Connection: close\r\n\r\n0123456789"
+        ),
+    )
+    .await;
+    assert!(reply.body.contains("body=0123456789"), "{}", reply.body);
+    let bodies = next_bodies(&mut events).await;
+    assert_eq!(bodies.request.data, "0123");
+    assert_eq!(bodies.request.size, 10);
+    assert!(bodies.request.truncated);
+    assert_eq!(bodies.response.data.len(), 4);
+    assert!(bodies.response.truncated);
+    assert_eq!(bodies.response.size, reply.body.len() as u64);
+}
+
+#[tokio::test]
+async fn rejected_flow_is_captured() {
+    let proxy = start_proxy().await;
+    let mut events = proxy.subscribe();
+    let reply = send(proxy.local_addr(), &get("/", "example.com")).await;
+    assert_eq!(reply.status(), 400);
+    let flow = next_http(&mut events).await;
+    assert_eq!(
+        header(&flow.response_headers, "content-type"),
+        Some("text/plain; charset=utf-8")
+    );
+    let bodies = next_bodies(&mut events).await;
+    assert!(
+        String::from_utf8_lossy(&bodies.response.data).contains("Esto es ProxyRR"),
+        "{:?}",
+        bodies.response
+    );
+}
+
+/// Origen crudo: manda headers + `first`, espera la señal y recién ahí manda `rest` (o corta).
+async fn start_raw_origin(
+    head: &'static str,
+    first: &'static str,
+    rest: Option<&'static str>,
+) -> (SocketAddr, tokio::sync::oneshot::Sender<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (go, wait) = tokio::sync::oneshot::channel::<()>();
+    tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut buf = [0u8; 4096];
+        let _ = stream.read(&mut buf).await;
+        stream.write_all(head.as_bytes()).await.unwrap();
+        stream.write_all(first.as_bytes()).await.unwrap();
+        let _ = wait.await;
+        if let Some(rest) = rest {
+            stream.write_all(rest.as_bytes()).await.unwrap();
+        }
+        // Al salir se cierra la conexión: con `rest = None` es un corte a mitad de body.
+    });
+    (addr, go)
+}
+
+#[tokio::test]
+async fn capture_does_not_buffer_the_stream() {
+    let (origin, go) = start_raw_origin(
+        "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n",
+        "7\r\nprimero\r\n",
+        Some("7\r\nsegundo\r\n0\r\n\r\n"),
+    )
+    .await;
+    let proxy = start_proxy().await;
+    let mut events = proxy.subscribe();
+    let mut stream = TcpStream::connect(proxy.local_addr()).await.unwrap();
+    stream
+        .write_all(get(&format!("http://{origin}/stream"), &origin.to_string()).as_bytes())
+        .await
+        .unwrap();
+    // El primer chunk tiene que llegar al cliente ANTES de que el origen termine.
+    let mut seen = Vec::new();
+    let mut buf = [0u8; 1024];
+    while !String::from_utf8_lossy(&seen).contains("primero") {
+        let n = timeout(Duration::from_secs(5), stream.read(&mut buf))
+            .await
+            .expect("el proxy retuvo el body en vez de reenviarlo")
+            .unwrap();
+        assert_ne!(n, 0);
+        seen.extend_from_slice(&buf[..n]);
+    }
+    go.send(()).unwrap();
+    let mut rest = Vec::new();
+    timeout(LIMIT, stream.read_to_end(&mut rest))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&rest).contains("segundo"));
+    let bodies = next_bodies(&mut events).await;
+    assert_eq!(bodies.response.data, "primerosegundo");
+    assert!(bodies.response.complete);
+}
+
+#[tokio::test]
+async fn origin_cut_mid_body_is_incomplete() {
+    let (origin, go) = start_raw_origin(
+        "HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n",
+        "0123456789",
+        None,
+    )
+    .await;
+    let proxy = start_proxy().await;
+    let mut events = proxy.subscribe();
+    let mut stream = TcpStream::connect(proxy.local_addr()).await.unwrap();
+    stream
+        .write_all(get(&format!("http://{origin}/cut"), &origin.to_string()).as_bytes())
+        .await
+        .unwrap();
+    let mut buf = [0u8; 1024];
+    let _ = timeout(LIMIT, stream.read(&mut buf)).await.unwrap();
+    go.send(()).unwrap(); // el origen cierra con 90 bytes pendientes
+    let bodies = next_bodies(&mut events).await;
+    assert_eq!(bodies.response.data, "0123456789");
+    assert_eq!(bodies.response.size, 10);
+    assert!(!bodies.response.complete);
 }

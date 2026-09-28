@@ -30,13 +30,14 @@ use tokio::sync::broadcast;
 use tokio::time::timeout;
 use tokio_rustls::LazyConfigAcceptor;
 
+use crate::capture::{Recorder, Side, Tap, headers_vec};
 use crate::config::ProxyConfig;
 use crate::event::{FlowEvent, HttpFlow, TunnelFlow};
 use crate::headers::strip_hop_by_hop;
 use crate::mitm::{Mitm, Prefixed, TLS_HANDSHAKE, crypto_provider, describe_client_tls_error};
 
 pub(crate) type ProxyBody = BoxBody<Bytes, hyper::Error>;
-type UpstreamClient = Client<HttpsConnector<HttpConnector>, Incoming>;
+type UpstreamClient = Client<HttpsConnector<HttpConnector>, Recorder<Incoming>>;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(90);
@@ -55,6 +56,7 @@ pub(crate) struct Context {
     next_id: AtomicU64,
     client: UpstreamClient,
     mitm: Option<Mitm>,
+    max_body_capture: usize,
 }
 
 impl Context {
@@ -82,6 +84,7 @@ impl Context {
             next_id: AtomicU64::new(1),
             client,
             mitm: config.mitm.as_ref().map(Mitm::new),
+            max_body_capture: config.max_body_capture,
         })
     }
 
@@ -184,7 +187,7 @@ pub(crate) async fn handle(
     })
 }
 
-/// Reenvía un request al origen (ya validado por `check`) y emite su evento.
+/// Reenvía un request al origen (ya validado por `check`), captura sus bodies y emite sus eventos.
 async fn exchange(
     req: Request<Incoming>,
     ctx: &Context,
@@ -192,35 +195,47 @@ async fn exchange(
 ) -> Response<ProxyBody> {
     let id = ctx.next_id();
     let started = Instant::now();
+    let tap = Tap::new(id, started, ctx.max_body_capture, ctx.events.clone());
     let method = req.method().to_string();
     let url = req.uri().to_string();
+    let request_headers = headers_vec(req.headers());
+    let req = req.map(|body| Recorder::new(body, Arc::clone(&tap), Side::Request));
 
     let outcome = if let Err(reject) = check {
         Err(reject)
     } else {
         send_upstream(req, ctx).await
     };
-    let (response, error) = match outcome {
+    let (response, response_headers, error) = match outcome {
         Ok(mut response) => {
+            let headers = headers_vec(response.headers());
             strip_hop_by_hop(response.headers_mut());
-            (response.map(BodyExt::boxed), None)
+            (response.map(BodyExt::boxed), headers, None)
         }
-        Err(reject) => (reject.response(), Some(reject.message)),
+        Err(reject) => {
+            let response = reject.response();
+            let headers = headers_vec(response.headers());
+            (response, headers, Some(reject.message))
+        }
     };
+    // Se emite ANTES de devolver la respuesta: su body no puede terminar antes, así que
+    // `HttpBodies` de este id siempre llega después de `Http`.
     ctx.emit(FlowEvent::Http(HttpFlow {
         id,
         method,
         url,
+        request_headers,
         status: response.status().as_u16(),
+        response_headers,
         error,
         elapsed: started.elapsed(),
         content_length: content_length(response.headers()),
     }));
-    response
+    response.map(|body| Recorder::new(body, tap, Side::Response).boxed())
 }
 
 async fn send_upstream(
-    mut req: Request<Incoming>,
+    mut req: Request<Recorder<Incoming>>,
     ctx: &Context,
 ) -> Result<Response<Incoming>, Reject> {
     strip_hop_by_hop(req.headers_mut());

@@ -188,6 +188,8 @@ fn format_event(event: &FlowEvent) -> Option<String> {
                 .unwrap_or_default(),
         ),
         FlowEvent::Tunnel(flow) if flow.intercepted && flow.error.is_none() => return None,
+        // Los bodies no se muestran en la terminal; los consume el store / la API.
+        FlowEvent::HttpBodies(_) => return None,
         FlowEvent::Tunnel(flow) => (
             flow.id,
             "CONNECT",
@@ -301,7 +303,9 @@ mod tests {
             id: 7,
             method: "GET".into(),
             url: "http://example.com/".into(),
+            request_headers: Vec::new(),
             status: 200,
+            response_headers: Vec::new(),
             error: None,
             elapsed: Duration::from_millis(42),
             content_length: Some(2048),

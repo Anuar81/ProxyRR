@@ -33,6 +33,14 @@ jobs:
 
       - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
 
+      # La app de escritorio (Tauri) usa WebKitGTK en Linux; Windows y macOS traen su WebView.
+      - name: Dependencias de la app de escritorio (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev
+
       - name: fmt
         if: runner.os == 'Linux'
         run: cargo fmt --all --check
@@ -42,6 +50,11 @@ jobs:
 
       - name: test
         run: cargo test --workspace
+
+      # Lógica pura de la UI (ui/lib.js), con el runner de tests que trae Node.
+      - name: test UI
+        if: runner.os == 'Linux'
+        run: node --test crates/proxyrr-desktop/tests-ui/lib.test.mjs
 
   deny:
     name: cargo deny

@@ -308,15 +308,31 @@ pub trait Runner {
 }
 
 /// Runner que ejecuta de verdad.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct SystemRunner;
+#[derive(Debug, Clone, Copy)]
+pub struct SystemRunner {
+    /// Programa para elevar los pasos `sudo` en Linux: `sudo` en la terminal, `pkexec` en la app
+    /// (no hay terminal donde pedir la contraseña; `pkexec` muestra su propio diálogo).
+    elevator: &'static str,
+}
+
+impl Default for SystemRunner {
+    fn default() -> Self {
+        Self { elevator: "sudo" }
+    }
+}
 
 impl SystemRunner {
-    fn command(step: &Step) -> Command {
+    /// Runner para apps gráficas: eleva con `pkexec`.
+    #[must_use]
+    pub fn graphical() -> Self {
+        Self { elevator: "pkexec" }
+    }
+
+    fn command(&self, step: &Step) -> Command {
         // `sudo` solo existe en los planes de Linux (Windows y macOS instalan para el usuario, sin
         // elevación); el `cfg!` lo deja explícito aunque un plan futuro marcara `sudo` por error.
         if step.sudo && cfg!(target_os = "linux") && !is_root() {
-            let mut cmd = Command::new("sudo");
+            let mut cmd = Command::new(self.elevator);
             cmd.arg(&step.program).args(&step.args);
             cmd
         } else {
@@ -329,11 +345,11 @@ impl SystemRunner {
 
 impl Runner for SystemRunner {
     fn run_interactive(&self, step: &Step) -> io::Result<bool> {
-        Ok(Self::command(step).status()?.success())
+        Ok(self.command(step).status()?.success())
     }
 
     fn run_captured(&self, step: &Step) -> io::Result<RunOutput> {
-        let out = Self::command(step).output()?;
+        let out = self.command(step).output()?;
         Ok(RunOutput {
             success: out.status.success(),
             stdout: String::from_utf8_lossy(&out.stdout).into_owned(),

@@ -6,6 +6,7 @@
 
 mod ca;
 mod cache;
+mod dirs;
 mod hash;
 mod leaf;
 
@@ -13,6 +14,7 @@ use std::path::PathBuf;
 
 pub use ca::{CA_CERT_FILE, CA_KEY_FILE, CaInfo, CertificateAuthority};
 pub use cache::LeafCache;
+pub use dirs::default_data_dir;
 pub use hash::{android_cert_filename, subject_hash_old};
 pub use leaf::LeafCert;
 

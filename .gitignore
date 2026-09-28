@@ -10,3 +10,6 @@
 Thumbs.db
 .idea/
 .vscode/
+
+# Esquemas que genera tauri-build al compilar la app
+crates/proxyrr-desktop/gen/

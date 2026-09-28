@@ -14,6 +14,10 @@ use tokio::sync::broadcast::Receiver;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::task::JoinHandle;
 
+mod decode;
+
+pub use decode::{Decoded, MAX_DECODED, decode_body};
+
 /// Límites del almacén. Al pasarse de cualquiera se descartan los flujos más viejos.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StoreLimits {

@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Ventana principal: eventos del core (avisos del engine) y los comandos propios de la app.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

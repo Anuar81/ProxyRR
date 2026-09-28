@@ -15,5 +15,5 @@ mod site;
 pub mod trust;
 
 pub use files::CaFiles;
-pub use net::{lan_ip, qr_text};
+pub use net::{lan_ip, qr_svg, qr_text};
 pub use site::{CertSite, Platform};

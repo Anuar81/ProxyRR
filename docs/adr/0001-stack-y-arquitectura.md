@@ -18,6 +18,9 @@ scripting, protocolos) sin reescribir el núcleo.
 - **UI**: Tauri 2 + frontend web. Una sola UI para los 3 SO, binario liviano.
 - **Licencia (tentativa)**: PolyForm Small Business 1.0.0 + licencia comercial aparte para empresas grandes.
   Las dependencias deben ser permisivas (MIT/Apache/BSD/ISC…); `cargo deny` rechaza GPL/AGPL/LGPL.
+  Excepción (spec 0009): MPL-2.0 solo para 5 crates transitivos de Tauri (`cssparser`, `cssparser-macros`,
+  `dtoa-short`, `selectors`, `option-ext`). Es copyleft por archivo: mientras no se modifiquen, no obliga
+  a nada sobre el código de ProxyRR. Cada excepción está nombrada en `deny.toml`.
 - **Separación**: el motor no conoce la UI. Todo cliente (desktop, CLI, tests, MCP) habla con una
   **API de control local** (HTTP + WebSocket, solo `127.0.0.1`, token por sesión).
 

@@ -324,25 +324,9 @@ fn format_size(bytes: u64) -> String {
     }
 }
 
-/// Directorio de datos por SO, sin dependencias externas:
-/// Windows `%APPDATA%\ProxyRR`, macOS `~/Library/Application Support/ProxyRR`,
-/// Linux/otros `$XDG_DATA_HOME/proxyrr` o `~/.local/share/proxyrr`.
 fn default_data_dir() -> Result<PathBuf, String> {
-    let env_dir = |name: &str| {
-        std::env::var_os(name)
-            .filter(|v| !v.is_empty())
-            .map(PathBuf::from)
-    };
-    let dir = if cfg!(windows) {
-        env_dir("APPDATA").map(|d| d.join("ProxyRR"))
-    } else if cfg!(target_os = "macos") {
-        env_dir("HOME").map(|h| h.join("Library/Application Support/ProxyRR"))
-    } else {
-        env_dir("XDG_DATA_HOME")
-            .or_else(|| env_dir("HOME").map(|h| h.join(".local/share")))
-            .map(|d| d.join("proxyrr"))
-    };
-    dir.ok_or_else(|| "no se pudo determinar el directorio de datos; usá --data-dir".to_owned())
+    proxyrr_cert::default_data_dir()
+        .ok_or_else(|| "no se pudo determinar el directorio de datos; usá --data-dir".to_owned())
 }
 
 fn run_ca(cmd: CaCommand, data_dir: &Path) -> Result<(), String> {

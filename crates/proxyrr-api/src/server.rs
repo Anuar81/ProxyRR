@@ -24,7 +24,7 @@ use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
 use crate::dto::{FlowDto, FlowSummaryDto, StatusDto, WsMessage};
-use crate::engine::{Engine, EngineError, Notice, ProxySettings};
+use crate::engine::{Engine, EngineError, ProxySettings};
 
 /// Puerto por defecto de la API (el del proxy + 1).
 pub const DEFAULT_API_PORT: u16 = 9091;
@@ -487,9 +487,7 @@ async fn stream_events(mut socket: WebSocket, state: AppState) {
                 Some(Ok(_)) => continue,
             },
             notice = notices.recv() => match notice {
-                Ok(Notice::Flow(summary)) => WsMessage::Flow { flow: summary.into() },
-                Ok(Notice::Cleared) => WsMessage::Cleared,
-                Ok(Notice::Proxy(status)) => WsMessage::Proxy { proxy: status.into() },
+                Ok(notice) => WsMessage::from(notice),
                 Err(RecvError::Lagged(missed)) => WsMessage::Lagged { missed },
                 Err(RecvError::Closed) => break,
             },

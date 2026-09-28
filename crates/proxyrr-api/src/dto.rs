@@ -6,20 +6,20 @@ use proxyrr_core::{CapturedBody, Headers};
 use proxyrr_store::{FlowSummary, StoredFlow};
 use serde::Serialize;
 
-use crate::engine::{EngineStatus, ProxyStatus};
+use crate::engine::{EngineStatus, Notice, ProxyStatus};
 
 fn millis(d: Duration) -> u64 {
     u64::try_from(d.as_millis()).unwrap_or(u64::MAX)
 }
 
 /// `GET /api/v1/status`.
-#[derive(Debug, Serialize)]
-pub(crate) struct StatusDto {
-    version: &'static str,
-    proxy: ProxyStatusDto,
-    flows: usize,
-    body_bytes: u64,
-    dropped_events: u64,
+#[derive(Debug, Clone, Serialize)]
+pub struct StatusDto {
+    pub version: &'static str,
+    pub proxy: ProxyStatusDto,
+    pub flows: usize,
+    pub body_bytes: u64,
+    pub dropped_events: u64,
 }
 
 impl From<EngineStatus> for StatusDto {
@@ -34,12 +34,12 @@ impl From<EngineStatus> for StatusDto {
     }
 }
 
-#[derive(Debug, Serialize)]
-pub(crate) struct ProxyStatusDto {
-    running: bool,
-    listen: Option<String>,
-    mitm: bool,
-    bypass: Vec<String>,
+#[derive(Debug, Clone, Serialize)]
+pub struct ProxyStatusDto {
+    pub running: bool,
+    pub listen: Option<String>,
+    pub mitm: bool,
+    pub bypass: Vec<String>,
 }
 
 impl From<ProxyStatus> for ProxyStatusDto {
@@ -53,17 +53,17 @@ impl From<ProxyStatus> for ProxyStatusDto {
     }
 }
 
-#[derive(Debug, Serialize)]
-pub(crate) struct FlowSummaryDto {
-    id: u64,
-    method: String,
-    url: String,
-    status: u16,
-    failed: bool,
-    elapsed_ms: u64,
-    response_size: Option<u64>,
-    in_progress: bool,
-    tunnel: bool,
+#[derive(Debug, Clone, Serialize)]
+pub struct FlowSummaryDto {
+    pub id: u64,
+    pub method: String,
+    pub url: String,
+    pub status: u16,
+    pub failed: bool,
+    pub elapsed_ms: u64,
+    pub response_size: Option<u64>,
+    pub in_progress: bool,
+    pub tunnel: bool,
 }
 
 impl From<FlowSummary> for FlowSummaryDto {
@@ -83,12 +83,12 @@ impl From<FlowSummary> for FlowSummaryDto {
 }
 
 /// Metadatos de un body; los bytes se piden aparte.
-#[derive(Debug, Serialize)]
-pub(crate) struct BodyMetaDto {
-    size: u64,
-    captured: usize,
-    truncated: bool,
-    complete: bool,
+#[derive(Debug, Clone, Serialize)]
+pub struct BodyMetaDto {
+    pub size: u64,
+    pub captured: usize,
+    pub truncated: bool,
+    pub complete: bool,
 }
 
 impl From<&CapturedBody> for BodyMetaDto {
@@ -102,17 +102,17 @@ impl From<&CapturedBody> for BodyMetaDto {
     }
 }
 
-#[derive(Debug, Serialize)]
-pub(crate) struct MessageDto {
-    headers: Headers,
+#[derive(Debug, Clone, Serialize)]
+pub struct MessageDto {
+    pub headers: Headers,
     /// `None` mientras el flujo sigue en curso.
-    body: Option<BodyMetaDto>,
+    pub body: Option<BodyMetaDto>,
 }
 
 /// `GET /api/v1/flows/{id}`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub(crate) enum FlowDto {
+pub enum FlowDto {
     Http {
         id: u64,
         method: String,
@@ -172,13 +172,44 @@ impl From<StoredFlow> for FlowDto {
     }
 }
 
-/// Mensajes del WebSocket `/api/v1/events`.
-#[derive(Debug, Serialize)]
+/// Mensajes del WebSocket `/api/v1/events` (y de los eventos de la app de escritorio).
+#[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub(crate) enum WsMessage {
-    Hello { status: StatusDto },
-    Flow { flow: FlowSummaryDto },
+pub enum WsMessage {
+    /// Estado inicial al conectar.
+    Hello {
+        /// Estado.
+        status: StatusDto,
+    },
+    /// Flujo nuevo o actualizado.
+    Flow {
+        /// Resumen.
+        flow: FlowSummaryDto,
+    },
+    /// Se vació el store.
     Cleared,
-    Proxy { proxy: ProxyStatusDto },
-    Lagged { missed: u64 },
+    /// El proxy se prendió o apagó.
+    Proxy {
+        /// Estado del proxy.
+        proxy: ProxyStatusDto,
+    },
+    /// El cliente se atrasó y se perdió `missed` avisos: hay que resincronizar con la lista.
+    Lagged {
+        /// Avisos perdidos.
+        missed: u64,
+    },
+}
+
+impl From<Notice> for WsMessage {
+    fn from(notice: Notice) -> Self {
+        match notice {
+            Notice::Flow(summary) => Self::Flow {
+                flow: summary.into(),
+            },
+            Notice::Cleared => Self::Cleared,
+            Notice::Proxy(status) => Self::Proxy {
+                proxy: status.into(),
+            },
+        }
+    }
 }

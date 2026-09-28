@@ -23,9 +23,10 @@ Referencia funcional: el set de features de Proxyman (implementación propia, si
 | 0003 | [ca-certificates](0003-ca-certificates/requirements.md) | F1 | terminada (PR #2) |
 | 0004 | [http-proxy](0004-http-proxy/requirements.md) | F1 | terminada (PR #3) |
 | 0005 | [https-mitm](0005-https-mitm/requirements.md) | F1 | terminada (PR #4) |
-| 0006 | [certificate-setup](0006-certificate-setup/requirements.md) | F1/F2/F4 | en curso |
+| 0006 | [certificate-setup](0006-certificate-setup/requirements.md) | F1/F2/F4 | terminada (PR #7; CA 9 en 0002) |
 | 0007 | [flow-store](0007-flow-store/requirements.md) | F1 | terminada (PR #5) |
 | 0008 | [control-api](0008-control-api/requirements.md) | F1 | terminada (PR #6) |
+| 0009 | [desktop-mvp](0009-desktop-mvp/requirements.md) | F2 | en curso |
 
 Orden acordado para llegar rápido a algo usable (la app de escritorio):
 `flow-store` → `control-api` → **0006 certificate-setup** (CLI `ca install`, página `proxyrr.cert`, guías)

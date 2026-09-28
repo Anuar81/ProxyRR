@@ -7,6 +7,11 @@ all-features = true
 [advisories]
 version = 2
 yanked = "deny"
+ignore = [
+  # proc-macro-error: "unmaintained" (no es una vulnerabilidad). Macro de compilación que entra solo en
+  # Linux vía los bindings GTK3 de Tauri 2 (glib-macros); no corre en la app. Se revisa al pasar a Tauri 3.
+  { id = "RUSTSEC-2024-0370", reason = "unmaintained, build-time only, vía gtk3 de Tauri 2 en Linux" },
+]
 
 [licenses]
 version = 2
@@ -29,6 +34,25 @@ allow = [
 # Los crates propios usan `license-file` (PolyForm no es un id SPDX aceptado por la lista).
 [licenses.private]
 ignore = true
+
+# MPL-2.0 es copyleft por ARCHIVO: obliga a publicar cambios a esos archivos, no al resto del programa.
+# Se acepta solo para estas dependencias transitivas de Tauri (sin alternativa), sin modificarlas.
+# Ver docs/adr/0001-stack-y-arquitectura.md. Cualquier otra MPL sigue rechazada.
+[[licenses.exceptions]]
+crate = "cssparser"
+allow = ["MPL-2.0"]
+[[licenses.exceptions]]
+crate = "cssparser-macros"
+allow = ["MPL-2.0"]
+[[licenses.exceptions]]
+crate = "dtoa-short"
+allow = ["MPL-2.0"]
+[[licenses.exceptions]]
+crate = "selectors"
+allow = ["MPL-2.0"]
+[[licenses.exceptions]]
+crate = "option-ext"
+allow = ["MPL-2.0"]
 
 [bans]
 multiple-versions = "warn"

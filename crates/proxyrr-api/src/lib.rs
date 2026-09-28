@@ -14,6 +14,10 @@ mod dto;
 mod engine;
 mod server;
 
+pub use dto::{
+    BodyMetaDto, FlowDto, FlowSummaryDto, MessageDto, ProxyStatusDto, StatusDto, WsMessage,
+};
+
 pub use engine::{
     Engine, EngineError, EngineOptions, EngineStatus, Notice, ProxySettings, ProxyStatus,
 };

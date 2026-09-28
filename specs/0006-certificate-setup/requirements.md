@@ -1,6 +1,6 @@
 # 0006 — Certificate setup
 
-- Estado: en curso
+- Estado: terminada (PR #7; CA 9 se completa en 0002, CA 14 en 0009)
 - Alcance de esta entrega: CA 1–8 y 10–13 (CLI, página de la CA, guías). CA 9 se completa en 0002
   (automatización del emulador con adb) y CA 14 en `desktop-mvp` (menú Certificado sobre las mismas piezas).
 - Fase: F1 (CLI + página de la CA) / F2 (menú en la app) / F4 (automatización por dispositivo)

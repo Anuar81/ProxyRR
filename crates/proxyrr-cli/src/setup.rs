@@ -85,7 +85,7 @@ pub(crate) fn ca_install(data_dir: &Path, dry_run: bool) -> Result<(), String> {
         println!("\n--dry-run: no se ejecutó nada.");
         return Ok(());
     }
-    trust::apply(&plan, &SystemRunner)?;
+    trust::apply(&plan, &SystemRunner::default())?;
     println!("\nListo: {} es de confianza en este equipo.", files.name);
     if let Some(note) = trust::firefox_note(os) {
         println!("{note}");
@@ -103,7 +103,7 @@ pub(crate) fn ca_uninstall(data_dir: &Path, dry_run: bool) -> Result<(), String>
         println!("\n--dry-run: no se ejecutó nada.");
         return Ok(());
     }
-    trust::apply(&plan, &SystemRunner)?;
+    trust::apply(&plan, &SystemRunner::default())?;
     println!(
         "\nListo: {} ya no es de confianza en este equipo.",
         files.name
@@ -115,7 +115,7 @@ pub(crate) fn ca_status(data_dir: &Path) -> Result<(), String> {
     let (files, pem) = ca_files(data_dir)?;
     let os = Os::current();
     println!("{} (SHA-256 {})", files.name, files.sha256);
-    let results = trust::status(os, &pem, &files, &linux_tools(os), &SystemRunner);
+    let results = trust::status(os, &pem, &files, &linux_tools(os), &SystemRunner::default());
     for s in &results {
         match (s.installed, &s.detail) {
             (Some(true), _) => println!("  [x] {}", s.store),
@@ -167,7 +167,7 @@ pub(crate) fn run_setup(data_dir: &Path, args: &SetupArgs) -> Result<(), String>
             let step = ios_simulator_step(&pem);
             println!("\nInstalando en el simulador que está abierto:");
             print_plan(std::slice::from_ref(&step));
-            trust::apply(&[step], &SystemRunner)?;
+            trust::apply(&[step], &SystemRunner::default())?;
             println!("Listo. Reiniciá la app en el simulador.");
             Ok(())
         }

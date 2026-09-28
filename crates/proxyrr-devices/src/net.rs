@@ -29,9 +29,28 @@ pub fn qr_text(text: &str) -> Option<String> {
     )
 }
 
+/// QR de `text` como SVG autocontenido (para la app de escritorio).
+#[must_use]
+pub fn qr_svg(text: &str) -> Option<String> {
+    let code = QrCode::new(text.as_bytes()).ok()?;
+    Some(
+        code.render::<qrcode::render::svg::Color<'_>>()
+            .min_dimensions(200, 200)
+            .quiet_zone(true)
+            .build(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn qr_svg_is_an_svg() {
+        let svg = qr_svg("http://192.168.0.2:9090/cert").unwrap();
+        assert!(svg.contains("<svg") && svg.contains("</svg>"));
+        assert!(!svg.contains("<script"), "sin scripts");
+    }
 
     #[test]
     fn lan_ip_is_never_loopback() {

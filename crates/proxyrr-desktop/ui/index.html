@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>ProxyRR</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <header class="toolbar">
+    <button id="toggle" class="primary" type="button" aria-pressed="false">Iniciar</button>
+    <label class="field">Escuchar
+      <input id="listen" value="127.0.0.1:9090" spellcheck="false" aria-label="Dirección de escucha" size="16">
+    </label>
+    <label class="check"><input id="mitm" type="checkbox" checked> Descifrar HTTPS</label>
+    <label class="field grow-s">Sin descifrar
+      <input id="bypass" placeholder="*.apple.com, banco.com" spellcheck="false" aria-label="Hosts sin descifrar">
+    </label>
+    <span id="proxy-state" class="state" role="status">Apagado</span>
+    <span class="spacer"></span>
+    <input id="filter" type="search" placeholder="Filtrar (texto, status:4xx, method:post, -excluir)" aria-label="Filtrar flujos">
+    <button id="clear" type="button" title="Borrar todos los flujos">Limpiar</button>
+    <button id="cert" type="button">Certificado…</button>
+  </header>
+
+  <main class="split">
+    <section class="list" aria-label="Flujos">
+      <table>
+        <thead><tr><th class="c-id">#</th><th class="c-m">Método</th><th class="c-s">Status</th><th>URL</th><th class="c-n">Tamaño</th><th class="c-n">Tiempo</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+      <p id="empty" class="empty">Iniciá el proxy y configurá <code>127.0.0.1:9090</code> como proxy HTTP y HTTPS. Los flujos aparecen acá en vivo.</p>
+    </section>
+
+    <section class="inspector" aria-label="Detalle">
+      <div id="no-selection" class="empty">Elegí un flujo para ver el detalle.</div>
+      <div id="detail" hidden>
+        <h2 id="d-title" class="d-title"></h2>
+        <p id="d-meta" class="d-meta"></p>
+        <div class="tabs" role="tablist">
+          <button role="tab" data-side="request" type="button">Request</button>
+          <button role="tab" data-side="response" type="button" aria-selected="true">Response</button>
+        </div>
+        <div id="pane"></div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="statusbar">
+    <span id="count">0 flujos</span>
+    <span id="dropped" class="warn" hidden></span>
+    <span id="error" class="error" role="alert"></span>
+  </footer>
+
+  <dialog id="cert-dialog" aria-labelledby="cert-title">
+    <div class="dlg">
+      <nav class="dlg-nav" aria-label="Destinos">
+        <h2 id="cert-title">Certificado</h2>
+        <button type="button" data-target="this">Este equipo</button>
+        <button type="button" data-target="ios">iPhone / iPad</button>
+        <button type="button" data-target="ios-simulator">Simulador de iOS</button>
+        <button type="button" data-target="android-emulator">Emulador de Android</button>
+        <button type="button" data-target="android-device">Android físico</button>
+      </nav>
+      <div id="cert-body" class="dlg-body"></div>
+      <button id="cert-close" class="dlg-close" type="button" aria-label="Cerrar">✕</button>
+    </div>
+  </dialog>
+</body>
+</html>

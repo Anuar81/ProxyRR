@@ -23,9 +23,12 @@ Referencia funcional: el set de features de Proxyman (implementación propia, si
 | 0003 | [ca-certificates](0003-ca-certificates/requirements.md) | F1 | terminada (PR #2) |
 | 0004 | [http-proxy](0004-http-proxy/requirements.md) | F1 | terminada (PR #3) |
 | 0005 | [https-mitm](0005-https-mitm/requirements.md) | F1 | en curso |
+| 0006 | [certificate-setup](0006-certificate-setup/requirements.md) | F1/F2/F4 | borrador (requisitos capturados temprano) |
 
-Próximas previstas (se escriben al cerrar la anterior):
-`flow-store`, `control-api`, `cli`, `har-export`.
+Orden acordado para llegar rápido a algo usable (la app de escritorio):
+`flow-store` → `control-api` → **0006 certificate-setup** (CLI `ca install`, página `proxyrr.cert`, guías)
+→ `desktop-mvp` (lista en vivo, inspector, filtro, start/stop, menú Certificado) → 0002 android-capture.
+Después: `har-export`, mejoras de CLI, resto de F2–F5.
 
 **Cierre (última spec del roadmap):** `tech-debt-cleanup`: paga todo lo que siga abierto en
 [TECH-DEBT.md](TECH-DEBT.md). Se numera cuando se crea, como cualquier otra.
@@ -46,7 +49,7 @@ guardar/abrir sesión, reglas con wildcard/regex, code generator.
 
 **F4**: Android emulador automático vía `adb` (ver 0002), Android físico (guía + QR + servidor de CA local),
 snippet `network_security_config`, iOS físico (guía + perfil), iOS Simulator (macOS),
-proxy del sistema auto on/off (Win/Mac/Linux).
+proxy del sistema auto on/off (Win/Mac/Linux). Instalación de la CA por destino: ver 0006.
 
 **F5**: scripting JS (on_request / on_response, estado compartido), WebSocket (frames en vivo),
 HTTP/2, gRPC/Protobuf, GraphQL (match por operationName), network conditions, reverse proxy,

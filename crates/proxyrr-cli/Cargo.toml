@@ -1,0 +1,20 @@
+[package]
+name = "proxyrr-cli"
+description = "Binario `proxyrr`: modo headless y CI."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "proxyrr"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+
+[lints]
+workspace = true

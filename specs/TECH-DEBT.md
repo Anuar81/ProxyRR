@@ -13,6 +13,7 @@ Cada entrada: id, origen, qué pasa, por qué importa, propuesta. Al pagarla: `P
 | TD-003 | 0004 | abierta |
 | TD-004 | 0004 | abierta |
 | TD-005 | 0001 | abierta |
+| TD-006 | 0004 | abierta |
 
 ## TD-001 — Timeout de conexión al origen de 10 s
 
@@ -52,3 +53,13 @@ Cada entrada: id, origen, qué pasa, por qué importa, propuesta. Al pagarla: `P
 - **Qué pasa:** el archivo tiene el resumen y el link al texto oficial de PolyForm Small Business 1.0.0,
   no el texto completo (las descargas estaban bloqueadas al crearlo).
 - **Propuesta:** pegar el texto oficial cuando la licencia deje de ser tentativa.
+
+
+## TD-006 — El motor no tiene logging: los errores internos no se ven
+
+- **Origen:** 0004 (review del PR #3).
+- **Qué pasa:** errores que no son de un flujo, como un `accept` que falla, se absorben con un reintento
+  y no quedan registrados en ningún lado. Si el listener falla de forma persistente, nadie se entera.
+- **Propuesta:** `tracing` en `proxyrr-core` (warn en errores de `accept` y de conexión, con conteo para
+  no inundar), `tracing-subscriber` en el CLI con `--log-level`, y la API de control reenviando esos
+  logs a la UI. Momento natural: la spec `cli` o `control-api`, antes del cierre.

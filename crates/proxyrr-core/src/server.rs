@@ -80,6 +80,8 @@ async fn accept_loop(listener: TcpListener, ctx: Arc<Context>, mut stop: oneshot
                 Ok((stream, _peer)) => {
                     tokio::spawn(serve_connection(stream, Arc::clone(&ctx)));
                 }
+                // Transitorio (p. ej. sin descriptores libres): pausa y reintento. Sin logging todavía,
+                // el error no se reporta; ver TD-006 en specs/TECH-DEBT.md.
                 Err(_) => tokio::time::sleep(ACCEPT_BACKOFF).await,
             },
         }

@@ -212,6 +212,7 @@ fn check_http_target(uri: &Uri, local: SocketAddr) -> Result<(), Reject> {
             "ProxyRR: la URL no tiene host.",
         ));
     };
+    // El esquema ya se validó como `http`, así que sin puerto explícito el puerto es 80 (RFC 9110 §4.2.1).
     if is_self(authority.host(), authority.port_u16().unwrap_or(80), local) {
         return Err(loop_detected());
     }

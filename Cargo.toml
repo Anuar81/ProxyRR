@@ -37,6 +37,7 @@ x509-parser = { version = "=0.18.1", features = ["verify"] }
 
 proxyrr-cert = { path = "crates/proxyrr-cert" }
 proxyrr-core = { path = "crates/proxyrr-core" }
+proxyrr-store = { path = "crates/proxyrr-store" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

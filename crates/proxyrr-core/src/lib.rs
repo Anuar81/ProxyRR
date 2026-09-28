@@ -17,6 +17,7 @@
 //! # Ok(()) }
 //! ```
 
+mod capture;
 mod config;
 mod event;
 mod handler;
@@ -24,7 +25,8 @@ mod headers;
 mod mitm;
 mod server;
 
+pub use capture::DEFAULT_MAX_BODY_CAPTURE;
 pub use config::{DEFAULT_PORT, MitmConfig, ProxyConfig};
-pub use event::{FlowEvent, HttpFlow, TunnelFlow};
+pub use event::{CapturedBody, FlowEvent, Headers, HttpBodies, HttpFlow, TunnelFlow};
 pub use headers::strip_hop_by_hop;
 pub use server::Proxy;

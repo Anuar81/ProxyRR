@@ -1,6 +1,6 @@
 [package]
 name = "proxyrr-store"
-description = "Modelo de flujos capturados, persistencia SQLite y export HAR."
+description = "Modelo de flujos capturados, almacén en memoria, persistencia y export HAR."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,6 +8,13 @@ license-file.workspace = true
 repository.workspace = true
 authors.workspace = true
 publish.workspace = true
+
+[dependencies]
+proxyrr-core.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+bytes.workspace = true
 
 [lints]
 workspace = true

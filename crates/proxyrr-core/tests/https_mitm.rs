@@ -92,6 +92,7 @@ async fn start_mitm_proxy(origin: &Origin, trust_origin: bool, bypass: &[&str]) 
         } else {
             Vec::new()
         },
+        ..ProxyConfig::default()
     })
     .await
     .unwrap()
@@ -104,6 +105,7 @@ async fn start_mitm_proxy_with_ca(origin: &Origin) -> (Proxy, Arc<CertificateAut
         listen: "127.0.0.1:0".parse().unwrap(),
         mitm: Some(MitmConfig::new(Arc::clone(&ca))),
         upstream_roots: vec![origin.ca.cert_der().to_vec()],
+        ..ProxyConfig::default()
     })
     .await
     .unwrap();
@@ -361,4 +363,24 @@ async fn server_first_protocol_is_tunneled_after_wait() {
         .unwrap()
         .unwrap();
     assert_eq!(&buf, b"220 hola\r\n");
+}
+
+#[tokio::test]
+async fn decrypted_bodies_are_captured() {
+    let origin = start_https_origin("localhost").await;
+    let (proxy, ca) = start_mitm_proxy_with_ca(&origin).await;
+    let mut events = proxy.subscribe();
+    let target = format!("localhost:{}", origin.addr.port());
+    let stream = connect(proxy.local_addr(), &target).await;
+    let stream = tls(stream, "localhost", &ca).await.expect("handshake MITM");
+    let mut client = http_client(stream).await;
+    let (_, body) = get(&mut client, &target, "/captura").await;
+    let bodies = loop {
+        if let FlowEvent::HttpBodies(bodies) = next_event(&mut events).await {
+            break bodies;
+        }
+    };
+    assert_eq!(bodies.response.data, body.as_bytes());
+    assert!(body.contains("uri=/captura"));
+    assert!(bodies.response.complete);
 }

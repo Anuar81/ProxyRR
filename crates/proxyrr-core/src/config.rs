@@ -6,6 +6,8 @@ use std::sync::Arc;
 
 use proxyrr_cert::CertificateAuthority;
 
+use crate::capture::DEFAULT_MAX_BODY_CAPTURE;
+
 /// Puerto por defecto (el mismo que usan otras herramientas del rubro, así las guías coinciden).
 pub const DEFAULT_PORT: u16 = 9090;
 
@@ -20,6 +22,8 @@ pub struct ProxyConfig {
     /// Certificados raíz (DER) extra en los que confiar al hablar con orígenes HTTPS, además de los del
     /// SO. Útil para una CA corporativa o un servidor de desarrollo con CA propia.
     pub upstream_roots: Vec<Vec<u8>>,
+    /// Bytes máximos que se guardan de cada body (el resto se reenvía igual, sin guardar).
+    pub max_body_capture: usize,
 }
 
 impl Default for ProxyConfig {
@@ -28,6 +32,7 @@ impl Default for ProxyConfig {
             listen: SocketAddr::from((Ipv4Addr::LOCALHOST, DEFAULT_PORT)),
             mitm: None,
             upstream_roots: Vec::new(),
+            max_body_capture: DEFAULT_MAX_BODY_CAPTURE,
         }
     }
 }

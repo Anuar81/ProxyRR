@@ -6,4 +6,4 @@
 - [x] T4. Bypass y no-TLS. Tests: `bypassed_host_is_not_decrypted`, `non_tls_over_connect_is_tunneled`, `server_first_protocol_is_tunneled_after_wait` (CA 5, 6).
 - [x] T5. Error de confianza del cliente. Test: `client_rejecting_ca_reports_tls_error` (CA 7).
 - [x] T6. CLI `start --mitm [--bypass]`. Tests: `proxyrr-cli/tests/start.rs::mitm_uses_ca_from_data_dir_and_shows_fingerprint`, `bypass_requires_mitm`, `main::tests::hides_successful_intercepted_tunnels_only` (CA 10). CA 9: `tests/http_proxy.rs` (0004) sigue verde sin cambios de comportamiento.
-- [ ] T7. fmt, clippy, test, deny en verde local y en CI. PR. Marcar spec como `terminada`.
+- [x] T7. fmt, clippy, test, deny en verde local y en CI. PR. Marcar spec como `terminada`.

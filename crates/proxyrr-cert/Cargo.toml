@@ -1,0 +1,13 @@
+[package]
+name = "proxyrr-cert"
+description = "CA raíz, emisión de certificados hoja y export PEM/DER."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

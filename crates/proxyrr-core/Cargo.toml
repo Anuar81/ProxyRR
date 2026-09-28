@@ -1,0 +1,13 @@
+[package]
+name = "proxyrr-core"
+description = "Motor del proxy: listeners, HTTP/1.1, CONNECT, MITM TLS y pipeline de hooks."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

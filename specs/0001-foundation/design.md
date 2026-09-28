@@ -26,7 +26,8 @@ crates/
 ## CI (`ci.yml`)
 
 - Matriz `os: [ubuntu-latest, windows-latest, macos-latest]`.
-- Pasos: checkout → `dtolnay/rust-toolchain` (lee `rust-toolchain.toml`) → `Swatinem/rust-cache`
+- Pasos: checkout → toolchain vía `rustup` (lee `rust-toolchain.toml`; ya viene en los runners, así que
+  no hace falta una action extra) → `Swatinem/rust-cache`
   → `cargo fmt --all --check` (solo Linux) → `cargo clippy --workspace --all-targets -- -D warnings`
   → `cargo test --workspace`.
 - Job aparte `deny` (Linux): `EmbarkStudios/cargo-deny-action`.

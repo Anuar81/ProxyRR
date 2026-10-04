@@ -12,6 +12,7 @@ import {
   headersToText,
   hexDump,
   hostOf,
+  isLoopbackListen,
   matchesFilter,
   optional,
   optionalInt,
@@ -123,4 +124,13 @@ test("reglas: vacía, resumen y campos opcionales", () => {
   assert.equal(optionalInt("8080", 1, 65535), 8080);
   assert.equal(optionalInt("70000", 1, 65535), null);
   assert.equal(optionalInt("12a", 1, 65535), null);
+});
+
+test("isLoopbackListen: un teléfono no llega a loopback", () => {
+  for (const addr of ["127.0.0.1:9090", "localhost:9090", "[::1]:9090", "", "127.5.0.1:1"]) {
+    assert.equal(isLoopbackListen(addr), true, addr);
+  }
+  for (const addr of ["0.0.0.0:9090", "192.168.0.254:9090", "[::]:9090"]) {
+    assert.equal(isLoopbackListen(addr), false, addr);
+  }
 });

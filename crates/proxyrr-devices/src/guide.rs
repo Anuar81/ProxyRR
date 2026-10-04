@@ -121,13 +121,17 @@ pub fn guide(target: Target, ctx: &GuideContext<'_>) -> Guide {
     let name = &ctx.files.name;
     let direct_url = format!("http://{lan}:{port}/cert");
     let listen_all = format!("proxyrr start --mitm --listen 0.0.0.0:{port}");
+    // Paso 1 de los destinos remotos: vale para la app y para la terminal.
+    let listen_step = format!(
+        "Hacé que el proxy escuche en la red (el teléfono tiene que llegar a {lan}:{port}): en la app, Dirección `0.0.0.0:{port}` → Iniciar; en la terminal, `{listen_all}`. Con `127.0.0.1` el teléfono no llega."
+    );
     let local = format!("proxyrr start --mitm --listen 127.0.0.1:{port}");
     let mut notes = vec![KEY_WARNING.to_owned()];
     let (title, steps, snippets, qr_url) = match target {
         Target::Ios => (
             "iPhone / iPad".to_owned(),
             vec![
-                format!("En esta máquina: `{listen_all}` (el teléfono tiene que poder llegar a {lan}:{port})."),
+                listen_step.clone(),
                 format!("En el iPhone: Ajustes → Wi-Fi → (i) de tu red → Configurar proxy → Manual: servidor {lan}, puerto {port}."),
                 format!("Abrí Safari en http://proxyrr.cert (o escaneá el QR, que abre {direct_url}) y tocá \"Descargar perfil\"."),
                 "Ajustes → Perfil descargado → Instalar (pide el código del teléfono).".to_owned(),
@@ -166,7 +170,7 @@ pub fn guide(target: Target, ctx: &GuideContext<'_>) -> Guide {
         Target::AndroidDevice => (
             "Android físico".to_owned(),
             vec![
-                format!("En esta máquina: `{listen_all}` (el teléfono tiene que poder llegar a {lan}:{port})."),
+                listen_step.clone(),
                 format!("En el teléfono: Ajustes → Wi-Fi → mantené apretada tu red → Modificar → Opciones avanzadas → Proxy manual: {lan}, puerto {port}."),
                 format!("Abrí http://proxyrr.cert en Chrome (o escaneá el QR, que abre {direct_url}) y tocá \"Descargar certificado\"."),
                 "Ajustes → Seguridad → Cifrado y credenciales → Instalar certificado → Certificado de CA → proxyrr-ca.crt (confirmá la advertencia).".to_owned(),

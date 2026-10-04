@@ -11,6 +11,7 @@ import {
   headersToText,
   hexDump,
   hostOf,
+  isLoopbackListen,
   matchesFilter,
   optional,
   optionalInt,
@@ -401,6 +402,31 @@ async function deviceGuide(target) {
   const port = portOf(state.listen || $("listen").value);
   const g = await call("guide", { target, port });
   const parts = [el("h2", { text: g.title })];
+  // Un teléfono en la red no llega a 127.0.0.1: avisarlo antes del QR, que si no apunta a la nada.
+  const remote = target === "ios" || target === "android-device";
+  const current = state.running ? state.listen : $("listen").value;
+  if (remote && isLoopbackListen(current)) {
+    const all = `0.0.0.0:${port}`;
+    parts.push(el("div", { class: "note warn" },
+      el("p", {}, "El proxy escucha en ", el("code", { text: current || "127.0.0.1" }),
+        ": solo lo ve esta máquina, así que el teléfono no va a llegar ni al proxy ni al QR."),
+      el("button", {
+        type: "button",
+        class: "primary",
+        onclick: async (ev) => {
+          ev.target.disabled = true;
+          try {
+            if (state.running) setProxy(await call("stop_proxy"));
+            $("listen").value = all;
+            await toggleProxy();
+            ev.target.textContent = state.running ? `Listo ✔ escuchando en ${all}` : "No arrancó: mirá la barra de abajo";
+          } catch {
+            ev.target.disabled = false;
+          }
+        },
+      }, `Escuchar en la red (${all})${state.running ? " y reiniciar" : " e iniciar"}`),
+    ));
+  }
   if (g.qr_svg) {
     const qr = el("div", { class: "qr", role: "img", "aria-label": `QR para abrir ${g.qr_url}` });
     // SVG generado por ProxyRR a partir de una URL propia (no de datos capturados).

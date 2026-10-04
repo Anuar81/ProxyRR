@@ -127,3 +127,5 @@ button.paused { background: var(--warn); border-color: var(--warn); color: #fff;
 .menu button:hover, .menu button:focus-visible { background: var(--sel); }
 .menu hr { border: none; border-top: 1px solid var(--line); margin: 4px 0; width: 100%; }
 .d-actions { display: flex; gap: 6px; margin: 0 0 8px; flex-wrap: wrap; }
+
+.note.warn { border: 1px solid var(--warn); border-radius: 6px; padding: 8px 10px; margin: 8px 0; }

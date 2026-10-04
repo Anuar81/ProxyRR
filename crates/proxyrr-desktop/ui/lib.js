@@ -103,6 +103,16 @@ export function portOf(listen, fallback = 9090) {
   return Number.isInteger(port) && port > 0 && port < 65536 ? port : fallback;
 }
 
+/**
+ * `true` si `listen` solo acepta conexiones de esta máquina (127.x, `localhost`, `[::1]`):
+ * un teléfono en la red no puede llegar a esa dirección.
+ */
+export function isLoopbackListen(listen) {
+  const text = (listen || "").trim().toLowerCase();
+  const host = text.startsWith("[") ? text.slice(1, text.indexOf("]")) : text.replace(/:\d+$/, "");
+  return host === "" || host === "localhost" || host === "::1" || /^127\./.test(host);
+}
+
 /** `a, b ,, c` → `["a", "b", "c"]`. */
 export function parseList(text) {
   return (text || "").split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);

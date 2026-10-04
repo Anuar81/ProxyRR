@@ -333,7 +333,9 @@ async function showCert(target) {
   const body = $("cert-body");
   body.replaceChildren(el("p", { class: "empty", text: "Cargando…" }));
   try {
-    body.replaceChildren(...(target === "this" ? await thisComputer() : await deviceGuide(target)));
+    body.replaceChildren(
+      ...(target === "this" ? await thisComputer() : target === "android" ? await androidPanel() : await deviceGuide(target)),
+    );
   } catch (e) {
     body.replaceChildren(el("p", { class: "note", text: String(e) }));
   }
@@ -402,10 +404,104 @@ async function deviceGuide(target) {
   return parts;
 }
 
+// ---------- Android (adb) ----------
+
+const DEVICE_STATE = {
+  ready: "",
+  unauthorized: "Sin autorizar: aceptá «¿Permitir depuración USB?» en el teléfono.",
+  offline: "Desconectado o arrancando.",
+};
+
+async function androidPanel() {
+  const list = await call("android_devices");
+  const port = portOf(state.listen || $("listen").value);
+  const parts = [
+    el("h2", { text: "Android con un clic" }),
+    el("p", {}, "ProxyRR configura el proxy del dispositivo y le instala la CA por ", el("code", { text: "adb" }),
+      ". Al cerrar la app el proxy se quita solo (si no, el dispositivo se queda sin internet)."),
+  ];
+  if (!state.running) {
+    parts.push(el("p", { class: "callout" }, "Iniciá el proxy primero (con «Descifrar HTTPS» para ver el tráfico de las apps)."));
+  }
+  if (list.error) parts.push(el("p", { class: "note", text: list.error }));
+
+  const input = el("input", { value: list.adb || "", spellcheck: "false", size: "48", "aria-label": "Ruta de adb", placeholder: "Ruta de adb (vacío: buscarlo solo)" });
+  parts.push(el("div", { class: "actions" },
+    el("label", { class: "field grow-s" }, "adb ", input),
+    el("button", { type: "button", onclick: async () => { try { await call("android_set_adb", { path: input.value }); } catch { return; } showCert("android"); } }, "Usar esta ruta"),
+    el("button", { type: "button", onclick: () => showCert("android") }, "Actualizar"),
+  ));
+
+  if (!list.error && list.devices.length === 0) {
+    parts.push(el("p", { class: "empty", text: "No hay emuladores ni dispositivos conectados. Abrí un emulador desde Android Studio o conectá un teléfono con la depuración USB activada, y tocá Actualizar." }));
+  }
+  for (const d of list.devices) {
+    const result = el("div");
+    const kind = d.emulator ? "Emulador" : "Dispositivo";
+    const mode = d.rootable
+      ? "CA de sistema: la ven todas las apps."
+      : "CA de usuario: Chrome y tus apps con network_security_config.";
+    const button = (label, onclick) => el("button", { type: "button", class: "primary", disabled: d.state !== "ready" || state.busy, onclick }, label);
+    const configure = async (ev) => {
+      ev.target.disabled = true;
+      result.replaceChildren(el("p", { class: "empty", text: "Configurando… (adb root puede tardar unos segundos)" }));
+      try {
+        const done = await call("android_configure", { serial: d.serial, port });
+        result.replaceChildren(
+          el("p", { class: "ok" }, `✔ Proxy ${done.proxy}. `, done.system_ca ? "CA en el store del sistema (hasta reiniciar el emulador)." : "CA copiada al dispositivo."),
+          ...done.notes.map((n) => el("p", { class: "note" }, richText(n))),
+          el("p", { class: "d-meta", text: "Si una app ya estaba abierta, cerrala y volvé a abrirla." }),
+        );
+      } catch (e) {
+        result.replaceChildren(el("p", { class: "note", text: String(e) }));
+      }
+      ev.target.disabled = false;
+    };
+    const revert = async (ev) => {
+      ev.target.disabled = true;
+      try {
+        await call("android_revert", { serial: d.serial });
+      } catch {
+        ev.target.disabled = false;
+        return;
+      }
+      showCert("android");
+    };
+    parts.push(el("section", { class: "device" },
+      el("h3", {}, `${kind}: ${d.label}`, el("small", { text: ` ${d.serial}` })),
+      el("p", { class: "d-meta", text: DEVICE_STATE[d.state] ?? d.state }),
+      d.state === "ready" ? el("p", { text: mode }) : "",
+      el("div", { class: "actions" },
+        button(d.configured ? "Configurar de nuevo" : "Configurar", configure),
+        d.configured || d.state === "ready" ? el("button", { type: "button", onclick: revert }, "Quitar proxy") : ""),
+      result,
+    ));
+  }
+  return parts;
+}
+
+async function exportHar() {
+  try {
+    const path = await call("export_har");
+    $("info").textContent = `HAR guardado en ${path}`;
+  } catch {
+    // mostrado
+  }
+}
+
+function showLog(level, message) {
+  const log = $("log");
+  log.hidden = false;
+  log.className = level === "error" ? "error" : "warn";
+  log.textContent = `Motor: ${message}`;
+  log.title = message;
+}
+
 // ---------- Arranque ----------
 
 function bind() {
   $("toggle").addEventListener("click", toggleProxy);
+  $("har").addEventListener("click", exportHar);
   $("filter").addEventListener("input", renderAll);
   $("clear").addEventListener("click", () => call("clear_flows").catch(() => {}));
   $("cert").addEventListener("click", () => {
@@ -448,6 +544,9 @@ async function main() {
       case "lagged":
         resync().catch(() => {});
         refreshStatus().catch(() => {});
+        break;
+      case "log":
+        showLog(payload.level, payload.message);
         break;
       default:
     }

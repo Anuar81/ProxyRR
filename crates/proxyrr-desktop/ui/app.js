@@ -12,6 +12,7 @@ import {
   hexDump,
   hostOf,
   isLoopbackListen,
+  isShown,
   matchesFilter,
   optional,
   optionalInt,
@@ -19,6 +20,7 @@ import {
   parseList,
   portOf,
   prettyJson,
+  requestsTo,
   ruleSummary,
   statusClass,
 } from "./lib.js";
@@ -151,7 +153,7 @@ function makeRow(f) {
 function renderAll() {
   const query = $("filter").value;
   state.rows.clear();
-  const rows = state.flows.visible(query).map(makeRow);
+  const rows = state.flows.visible(query, $("show-tunnels").checked).map(makeRow);
   $("rows").replaceChildren(...rows);
   updateFooter();
 }
@@ -171,7 +173,7 @@ function scheduleFlush() {
       const f = state.flows.get(id);
       if (!f) continue;
       const existing = state.rows.get(id);
-      const visible = matchesFilter(f, query);
+      const visible = isShown(f, query, $("show-tunnels").checked);
       if (existing && visible) fillRow(existing, f);
       else if (existing) {
         existing.remove();
@@ -252,13 +254,21 @@ async function refreshDetail() {
     $("d-title").textContent = `CONNECT ${flow.authority}`;
     $("d-meta").textContent = `${flow.status} · ${formatMs(flow.elapsed_ms)} · ${flow.intercepted ? "descifrado" : "sin descifrar"}`;
     document.querySelector(".tabs").hidden = true;
+    const inside = flow.intercepted ? requestsTo(state.flows.visible(""), flow.authority) : [];
     $("pane").replaceChildren(
       flow.error ? el("p", { class: "note", text: flow.error }) : "",
       el("p", {
-        text: flow.intercepted
-          ? "Los requests de este túnel aparecen como flujos https:// en la lista."
-          : "Túnel opaco: el contenido no se descifró (bypass, MITM apagado o no es TLS).",
+        text: !flow.intercepted
+          ? "Túnel opaco: el contenido no se descifró (bypass, MITM apagado o no es TLS)."
+          : inside.length
+            ? `Requests a ${flow.authority} (${inside.length}):`
+            : `Todavía no hay requests a ${flow.authority} en la lista.`,
       }),
+      inside.length
+        ? el("ul", { class: "tunnel-requests" }, inside.slice(-200).map((f) => el("li", {},
+          el("button", { type: "button", class: "link", onclick: () => select(f.id) },
+            `#${f.id} ${f.method} ${f.in_progress ? "…" : f.status} ${f.url}`))))
+        : "",
     );
     return;
   }
@@ -953,6 +963,12 @@ function bind() {
   $("toggle").addEventListener("click", toggleProxy);
   $("har").addEventListener("click", exportHar);
   $("filter").addEventListener("input", renderAll);
+  // Mostrar los CONNECT descifrados es una preferencia: se recuerda entre aperturas.
+  $("show-tunnels").checked = localStorage.getItem("proxyrr.showTunnels") === "1";
+  $("show-tunnels").addEventListener("change", () => {
+    localStorage.setItem("proxyrr.showTunnels", $("show-tunnels").checked ? "1" : "0");
+    renderAll();
+  });
   $("clear").addEventListener("click", () => call("clear_flows").catch(() => {}));
   $("cert").addEventListener("click", () => {
     $("cert-dialog").showModal();

@@ -90,6 +90,8 @@ pub struct FlowSummary {
     pub in_progress: bool,
     /// `true` si es un túnel `CONNECT`.
     pub tunnel: bool,
+    /// `true` si es un túnel cuyo TLS se descifró (sus requests aparecen como flujos aparte).
+    pub intercepted: bool,
     /// Reglas que modificaron el flujo (spec 0011).
     pub rules: Vec<String>,
 }
@@ -111,6 +113,7 @@ impl From<&StoredFlow> for FlowSummary {
                     .or(record.head.content_length),
                 in_progress: record.bodies.is_none(),
                 tunnel: false,
+                intercepted: false,
                 rules: record.head.rules.clone(),
             },
             StoredFlow::Tunnel(tunnel) => Self {
@@ -123,6 +126,7 @@ impl From<&StoredFlow> for FlowSummary {
                 response_size: None,
                 in_progress: false,
                 tunnel: true,
+                intercepted: tunnel.intercepted,
                 rules: Vec::new(),
             },
         }

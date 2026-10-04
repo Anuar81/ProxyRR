@@ -53,6 +53,36 @@ export function matchesFilter(flow, query) {
   });
 }
 
+/**
+ * `true` para un `CONNECT` descifrado sin avisos: no aporta nada porque sus requests ya están en
+ * la lista como flujos `https://`. Los que tienen error o aviso (p. ej. posible pinning) se muestran.
+ */
+export function isQuietTunnel(flow) {
+  return Boolean(flow.tunnel && flow.intercepted && !flow.failed);
+}
+
+/** Si `flow` va en la lista: filtro de texto y, salvo `showTunnels`, sin los túneles silenciosos. */
+export function isShown(flow, query, showTunnels = false) {
+  return (showTunnels || !isQuietTunnel(flow)) && matchesFilter(flow, query);
+}
+
+/** `host:puerto` de una URL http(s) (puerto por defecto incluido), o `""` si no parsea. */
+export function authorityOf(url) {
+  try {
+    const u = new URL(url);
+    const port = u.port || (u.protocol === "https:" ? "443" : u.protocol === "http:" ? "80" : "");
+    return port ? `${u.hostname}:${port}`.toLowerCase() : "";
+  } catch {
+    return "";
+  }
+}
+
+/** Flujos HTTP que fueron a `authority` (el destino de un túnel), en orden. */
+export function requestsTo(flows, authority) {
+  const want = (authority || "").toLowerCase();
+  return flows.filter((f) => !f.tunnel && authorityOf(f.url) === want);
+}
+
 /** JSON con sangría; si no parsea, el texto tal cual. */
 export function prettyJson(text) {
   try {
@@ -174,8 +204,8 @@ export class FlowList {
   }
 
   /** Flujos en orden, opcionalmente filtrados. */
-  visible(query) {
-    return this.ids.map((id) => this.byId.get(id)).filter((f) => matchesFilter(f, query));
+  visible(query, showTunnels = false) {
+    return this.ids.map((id) => this.byId.get(id)).filter((f) => isShown(f, query, showTunnels));
   }
 
   lastId() {

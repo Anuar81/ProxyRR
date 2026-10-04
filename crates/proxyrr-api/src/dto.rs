@@ -65,6 +65,7 @@ pub struct FlowSummaryDto {
     pub response_size: Option<u64>,
     pub in_progress: bool,
     pub tunnel: bool,
+    pub intercepted: bool,
     /// Reglas que modificaron el flujo.
     pub rules: Vec<String>,
 }
@@ -81,6 +82,7 @@ impl From<FlowSummary> for FlowSummaryDto {
             response_size: s.response_size,
             in_progress: s.in_progress,
             tunnel: s.tunnel,
+            intercepted: s.intercepted,
             rules: s.rules,
         }
     }

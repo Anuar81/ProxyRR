@@ -19,6 +19,7 @@
     <span id="proxy-state" class="state" role="status">Apagado</span>
     <span class="spacer"></span>
     <input id="filter" type="search" placeholder="Filtrar (texto, status:4xx, method:post, -excluir)" aria-label="Filtrar flujos">
+    <label class="check" title="Mostrar también los CONNECT ya descifrados (sus requests están en la lista como https://)"><input id="show-tunnels" type="checkbox"> CONNECT</label>
     <button id="clear" type="button" title="Borrar todos los flujos">Limpiar</button>
     <button id="har" type="button" title="Guardar todos los flujos HTTP como HAR en Descargas">Exportar HAR</button>
     <button id="paused" class="paused" type="button" hidden title="Flujos detenidos en un breakpoint">⏸ 0 en pausa</button>

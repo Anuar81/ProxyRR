@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import {
   ACTION_LABELS,
   FlowList,
+  authorityOf,
   base64ToBytes,
   emptyRule,
   formatMs,
@@ -13,6 +14,8 @@ import {
   hexDump,
   hostOf,
   isLoopbackListen,
+  isQuietTunnel,
+  isShown,
   matchesFilter,
   optional,
   optionalInt,
@@ -20,6 +23,7 @@ import {
   parseList,
   portOf,
   prettyJson,
+  requestsTo,
   ruleSummary,
   statusClass,
 } from "../ui/lib.js";
@@ -133,4 +137,34 @@ test("isLoopbackListen: un teléfono no llega a loopback", () => {
   for (const addr of ["0.0.0.0:9090", "192.168.0.254:9090", "[::]:9090"]) {
     assert.equal(isLoopbackListen(addr), false, addr);
   }
+});
+
+test("CONNECT descifrados: se ocultan salvo que tengan aviso o se pidan", () => {
+  const quiet = { id: 1, method: "CONNECT", url: "api.x.com:443", status: 200, tunnel: true, intercepted: true, failed: false };
+  const warned = { ...quiet, id: 2, failed: true };
+  const opaque = { ...quiet, id: 3, intercepted: false };
+  const http = flow(4);
+  assert.equal(isQuietTunnel(quiet), true);
+  assert.equal(isShown(quiet, ""), false);
+  assert.equal(isShown(quiet, "", true), true);
+  assert.equal(isShown(warned, ""), true, "el aviso de pinning tiene que verse");
+  assert.equal(isShown(opaque, ""), true);
+  assert.equal(isShown(http, "items"), true);
+  const list = new FlowList();
+  for (const f of [quiet, warned, opaque, http]) list.upsert(f);
+  assert.deepEqual(list.visible("").map((f) => f.id), [2, 3, 4]);
+});
+
+test("requestsTo: los requests al destino de un túnel", () => {
+  assert.equal(authorityOf("https://API.x.com/v1?a=1"), "api.x.com:443");
+  assert.equal(authorityOf("https://api.x.com:8443/"), "api.x.com:8443");
+  assert.equal(authorityOf("http://api.x.com/"), "api.x.com:80");
+  assert.equal(authorityOf("no es url"), "");
+  const flows = [
+    { id: 1, tunnel: true, url: "api.x.com:443" },
+    { id: 2, url: "https://api.x.com/login" },
+    { id: 3, url: "https://otro.com/" },
+    { id: 4, url: "https://api.x.com/refresh" },
+  ];
+  assert.deepEqual(requestsTo(flows, "api.x.com:443").map((f) => f.id), [2, 4]);
 });

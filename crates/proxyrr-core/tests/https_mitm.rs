@@ -384,3 +384,87 @@ async fn decrypted_bodies_are_captured() {
     assert!(body.contains("uri=/captura"));
     assert!(bodies.response.complete);
 }
+
+// ---- Spec 0010: TD-007 (--insecure-upstream) y TD-010 (proxyrr.cert por HTTPS sin MITM) ----
+
+#[tokio::test]
+async fn insecure_upstream_accepts_untrusted_origins() {
+    let origin = start_https_origin("localhost").await;
+    let ca = Arc::new(CertificateAuthority::generate().unwrap());
+    let proxy = Proxy::start(ProxyConfig {
+        listen: "127.0.0.1:0".parse().unwrap(),
+        mitm: Some(MitmConfig::new(Arc::clone(&ca))),
+        insecure_upstream: true,
+        ..ProxyConfig::default()
+    })
+    .await
+    .unwrap();
+    let target = format!("localhost:{}", origin.addr.port());
+    let stream = connect(proxy.local_addr(), &target).await;
+    let stream = tls(stream, "localhost", &ca).await.expect("handshake MITM");
+    let mut client = http_client(stream).await;
+    let (status, body) = get(&mut client, &target, "/inseguro").await;
+    assert_eq!(status, 200, "{body}");
+}
+
+#[derive(Debug)]
+struct CertPage;
+
+impl proxyrr_core::LocalSite for CertPage {
+    fn respond(&self, request: &proxyrr_core::LocalRequest<'_>) -> proxyrr_core::LocalResponse {
+        proxyrr_core::LocalResponse {
+            status: 200,
+            headers: vec![("content-type".into(), "text/plain".into())],
+            body: Bytes::from(format!("pagina local {}", request.path)),
+        }
+    }
+}
+
+#[tokio::test]
+async fn local_site_over_https_without_mitm() {
+    let ca = Arc::new(CertificateAuthority::generate().unwrap());
+    let proxy = Proxy::start(ProxyConfig {
+        listen: "127.0.0.1:0".parse().unwrap(),
+        local_site: Some(Arc::new(CertPage)),
+        local_site_ca: Some(Arc::clone(&ca)),
+        ..ProxyConfig::default()
+    })
+    .await
+    .unwrap();
+    let mut events = proxy.subscribe();
+    let stream = connect(proxy.local_addr(), "proxyrr.cert:443").await;
+    let stream = tls(stream, "proxyrr.cert", &ca)
+        .await
+        .expect("handshake con la hoja local");
+    let mut client = http_client(stream).await;
+    let (status, body) = get(&mut client, "proxyrr.cert", "/ca.pem").await;
+    assert_eq!(status, 200);
+    assert_eq!(body, "pagina local /ca.pem");
+    let tunnel = next_tunnel(&mut events).await;
+    assert!(tunnel.intercepted);
+    assert_eq!(tunnel.error, None);
+}
+
+#[tokio::test]
+async fn local_ca_never_decrypts_other_hosts() {
+    let origin = start_https_origin("localhost").await;
+    let ca = Arc::new(CertificateAuthority::generate().unwrap());
+    let proxy = Proxy::start(ProxyConfig {
+        listen: "127.0.0.1:0".parse().unwrap(),
+        local_site: Some(Arc::new(CertPage)),
+        local_site_ca: Some(Arc::clone(&ca)),
+        upstream_roots: vec![origin.ca.cert_der().to_vec()],
+        ..ProxyConfig::default()
+    })
+    .await
+    .unwrap();
+    let target = format!("localhost:{}", origin.addr.port());
+    let stream = connect(proxy.local_addr(), &target).await;
+    // Sin --mitm, el resto del tráfico sigue siendo un túnel opaco: habla con el origen real.
+    let stream = tls(stream, "localhost", &origin.ca)
+        .await
+        .expect("TLS directo con el origen");
+    let mut client = http_client(stream).await;
+    let (status, _) = get(&mut client, &target, "/").await;
+    assert_eq!(status, 200);
+}

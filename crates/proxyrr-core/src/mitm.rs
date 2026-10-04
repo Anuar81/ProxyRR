@@ -1,10 +1,12 @@
 //! Piezas del descifrado HTTPS: bypass, certificados por host y replay de bytes ya leídos.
 
 use std::io;
+use std::num::NonZeroUsize;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
+use lru::LruCache;
 use proxyrr_cert::{CertificateAuthority, LeafCache};
 use rustls::ServerConfig;
 use rustls::crypto::CryptoProvider;
@@ -63,14 +65,20 @@ fn normalize(host: &str) -> String {
 pub(crate) struct Mitm {
     ca: Arc<CertificateAuthority>,
     leaves: LeafCache,
+    /// Config TLS ya armada por host (TD-008): evita reparsear la clave en cada handshake.
+    configs: Mutex<LruCache<String, Arc<ServerConfig>>>,
     bypass: Vec<HostPattern>,
 }
+
+/// Hosts con config TLS en caché (la misma escala que la caché de hojas).
+const CONFIG_CACHE: NonZeroUsize = NonZeroUsize::new(1024).unwrap();
 
 impl Mitm {
     pub(crate) fn new(config: &MitmConfig) -> Self {
         Self {
             ca: Arc::clone(&config.ca),
             leaves: LeafCache::default(),
+            configs: Mutex::new(LruCache::new(CONFIG_CACHE)),
             bypass: config
                 .bypass
                 .iter()
@@ -83,8 +91,25 @@ impl Mitm {
         self.bypass.iter().any(|p| p.matches(host))
     }
 
-    /// Config TLS de servidor con la hoja de `host` (emitida o de caché).
+    /// Config TLS de servidor con la hoja de `host` (de caché, o emitida y cacheada).
     pub(crate) fn server_config(&self, host: &str) -> Result<Arc<ServerConfig>, String> {
+        let key = normalize(host);
+        if let Some(config) = self.lock_configs().get(&key) {
+            return Ok(Arc::clone(config));
+        }
+        let config = self.build_server_config(host)?;
+        self.lock_configs().put(key, Arc::clone(&config));
+        Ok(config)
+    }
+
+    fn lock_configs(&self) -> std::sync::MutexGuard<'_, LruCache<String, Arc<ServerConfig>>> {
+        // Un pánico con el lock tomado no deja la caché inconsistente: se sigue usando.
+        self.configs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn build_server_config(&self, host: &str) -> Result<Arc<ServerConfig>, String> {
         let leaf = self
             .leaves
             .get_or_issue(&self.ca, host)
@@ -238,6 +263,9 @@ mod tests {
         let mitm = Mitm::new(&MitmConfig::new(ca));
         let config = mitm.server_config("example.com").unwrap();
         assert_eq!(config.alpn_protocols, vec![ALPN_HTTP1.to_vec()]);
+        // Segunda vez sale de la caché: la misma config, sin reconstruirla.
+        let again = mitm.server_config("EXAMPLE.com").unwrap();
+        assert!(Arc::ptr_eq(&config, &again));
         assert!(mitm.server_config("bad host").is_err());
     }
 }

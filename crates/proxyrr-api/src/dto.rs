@@ -7,6 +7,7 @@ use proxyrr_store::{FlowSummary, StoredFlow};
 use serde::Serialize;
 
 use crate::engine::{EngineStatus, Notice, ProxyStatus};
+use crate::log::LogLevel;
 
 fn millis(d: Duration) -> u64 {
     u64::try_from(d.as_millis()).unwrap_or(u64::MAX)
@@ -198,11 +199,25 @@ pub enum WsMessage {
         /// Avisos perdidos.
         missed: u64,
     },
+    /// Advertencia o error del motor.
+    Log {
+        /// `warn` o `error`.
+        level: &'static str,
+        /// Texto.
+        message: String,
+    },
 }
 
 impl From<Notice> for WsMessage {
     fn from(notice: Notice) -> Self {
         match notice {
+            Notice::Log { level, message } => Self::Log {
+                level: match level {
+                    LogLevel::Warn => "warn",
+                    LogLevel::Error => "error",
+                },
+                message,
+            },
             Notice::Flow(summary) => Self::Flow {
                 flow: summary.into(),
             },

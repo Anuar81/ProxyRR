@@ -2,12 +2,12 @@
 //!
 //! [`FlowStore`] junta los eventos del motor por id y guarda los flujos completos en memoria, con
 //! límites de cantidad y de bytes. [`record`] conecta un proxy con un store. La persistencia en
-//! disco (guardar/abrir sesión) y el export HAR llegan en specs posteriores.
+//! disco (guardar/abrir sesión) llega en una spec posterior; el export HAR vive en `proxyrr-api`.
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use proxyrr_core::{FlowEvent, HttpBodies, HttpFlow, TunnelFlow};
 use tokio::sync::broadcast::Receiver;
@@ -43,6 +43,8 @@ pub struct HttpRecord {
     pub head: HttpFlow,
     /// Bodies; `None` mientras la respuesta sigue llegando.
     pub bodies: Option<HttpBodies>,
+    /// Hora (reloj de pared) en que llegó el request: hora de los headers menos `head.elapsed`.
+    pub started: SystemTime,
 }
 
 /// Un flujo guardado.
@@ -159,7 +161,9 @@ impl FlowStore {
         let mut inner = self.lock();
         match event {
             FlowEvent::Http(head) => {
+                let now = SystemTime::now();
                 let flow = StoredFlow::Http(Box::new(HttpRecord {
+                    started: now.checked_sub(head.elapsed).unwrap_or(now),
                     head: head.clone(),
                     bodies: None,
                 }));
@@ -184,6 +188,12 @@ impl FlowStore {
     #[must_use]
     pub fn list(&self) -> Vec<FlowSummary> {
         self.lock().flows.values().map(FlowSummary::from).collect()
+    }
+
+    /// Copia de todos los flujos completos, en orden de llegada (para exportar).
+    #[must_use]
+    pub fn snapshot(&self) -> Vec<StoredFlow> {
+        self.lock().flows.values().cloned().collect()
     }
 
     /// Resúmenes de los flujos con id mayor que `after`, en orden (para resincronizar una UI).

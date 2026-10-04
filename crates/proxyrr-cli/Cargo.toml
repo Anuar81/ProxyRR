@@ -14,12 +14,15 @@ name = "proxyrr"
 path = "src/main.rs"
 
 [dependencies]
+base64.workspace = true
 clap.workspace = true
 proxyrr-api.workspace = true
 proxyrr-cert.workspace = true
 proxyrr-core.workspace = true
 proxyrr-devices.workspace = true
+serde_json.workspace = true
 tokio.workspace = true
+tracing-subscriber.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

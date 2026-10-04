@@ -2832,13 +2832,16 @@ dependencies = [
 name = "proxyrr-cli"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "clap",
  "proxyrr-api",
  "proxyrr-cert",
  "proxyrr-core",
  "proxyrr-devices",
+ "serde_json",
  "tempfile",
  "tokio",
+ "tracing-subscriber",
 ]
 
 [[package]]

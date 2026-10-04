@@ -71,6 +71,10 @@ fn bodies_len(bodies: &HttpBodies) -> u64 {
 
 /// Resumen de un flujo para listas.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "resumen plano para la lista: cada bool es una columna/marca independiente"
+)]
 pub struct FlowSummary {
     /// Id del flujo.
     pub id: u64,

@@ -55,6 +55,10 @@ impl From<ProxyStatus> for ProxyStatusDto {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "espejo JSON de FlowSummary: cada bool es una marca independiente de la lista"
+)]
 pub struct FlowSummaryDto {
     pub id: u64,
     pub method: String,

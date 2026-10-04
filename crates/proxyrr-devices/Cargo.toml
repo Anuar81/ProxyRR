@@ -16,9 +16,10 @@ proxyrr-cert.workspace = true
 proxyrr-core.workspace = true
 qrcode.workspace = true
 ring.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
-tempfile.workspace = true
 
 [lints]
 workspace = true

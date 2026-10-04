@@ -571,3 +571,34 @@ async fn websocket_streams_live_notices() {
     .await;
     assert!(end.is_ok(), "el cliente no vio el cierre");
 }
+
+#[tokio::test]
+async fn har_export_contains_captured_flows() {
+    let (_engine, api) = start(Engine::new(EngineOptions::default())).await;
+    let origin = start_origin().await;
+    let started = call(
+        &api,
+        "POST",
+        "/api/v1/proxy/start",
+        r#"{"listen":"127.0.0.1:0"}"#,
+    )
+    .await
+    .json();
+    let proxy = proxy_addr(&started);
+    through_proxy(&api, proxy, origin, "/har?x=1").await;
+
+    let reply = call(&api, "GET", "/api/v1/har", "").await;
+    assert_eq!(reply.status, 200);
+    assert!(
+        reply
+            .header("content-disposition")
+            .is_some_and(|v| v.contains("proxyrr.har"))
+    );
+    let har = reply.json();
+    assert_eq!(har["log"]["version"], "1.2");
+    let entry = &har["log"]["entries"][0];
+    assert_eq!(entry["request"]["url"], format!("http://{origin}/har?x=1"));
+    assert_eq!(entry["request"]["queryString"][0]["name"], "x");
+    assert_eq!(entry["response"]["status"], 200);
+    assert!(entry["startedDateTime"].as_str().unwrap().ends_with('Z'));
+}

@@ -8,16 +8,16 @@ Cada entrada: id, origen, qué pasa, por qué importa, propuesta. Al pagarla: `P
 
 | Id | Origen | Estado |
 |----|--------|--------|
-| TD-001 | 0004 | abierta |
+| TD-001 | 0004 | pagada en 0010 |
 | TD-002 | 0004 | pagada en 0007 |
-| TD-003 | 0004 | abierta |
-| TD-004 | 0004 | abierta |
-| TD-005 | 0001 | abierta |
-| TD-006 | 0004 | abierta |
-| TD-007 | 0005 | abierta |
-| TD-008 | 0005 | abierta |
-| TD-009 | 0006 | abierta |
-| TD-010 | 0006 | abierta |
+| TD-003 | 0004 | pagada en 0010 |
+| TD-004 | 0004 | pagada en 0010 |
+| TD-005 | 0001 | abierta (depende de la licencia definitiva) |
+| TD-006 | 0004 | pagada en 0010 |
+| TD-007 | 0005 | pagada en 0010 |
+| TD-008 | 0005 | pagada en 0010 |
+| TD-009 | 0006 | abierta (necesita una Mac y un Linux reales) |
+| TD-010 | 0006 | pagada en 0010 |
 
 ## TD-001 — Timeout de conexión al origen de 10 s
 
@@ -105,3 +105,24 @@ Cada entrada: id, origen, qué pasa, por qué importa, propuesta. Al pagarla: `P
   intenta conectar a un host que no existe). Un navegador que fuerza HTTPS muestra error en vez de la página.
 - **Propuesta:** con un `CONNECT proxyrr.cert:443` y sin MITM, terminar el TLS igual con una hoja de la CA
   solo para ese host (el navegador avisará que no confía, pero con un mensaje que explica qué hacer).
+
+
+## Pagos de la 0010
+
+- **TD-001:** `ProxyConfig::connect_timeout`, 30 s por defecto, y `proxyrr start --connect-timeout`.
+  Test `connect_timeout_is_configurable`.
+- **TD-003:** `SelfGuard` (`proxyrr-core/src/guard.rs`): con `0.0.0.0`/`::` cualquier IP propia es el
+  proxy (se decide con un `bind` UDP, sin libc), y después de conectar se compara la dirección ya
+  resuelta, así que un hostname que resuelve al proxy también da 508. Tests
+  `all_interfaces_listener_detects_its_own_lan_ip` y `connector_rejects_hostnames_that_resolve_to_the_proxy`.
+- **TD-004:** `Proxy::shutdown_within(grace)`: deja de aceptar, cierra túneles opacos y keep-alive
+  ociosas, espera los requests en curso y corta lo que pase el plazo (5 s por defecto). Tests
+  `shutdown_*`.
+- **TD-006:** `tracing` en el motor (errores de `accept` agrupados con conteo), `--log-level` en el CLI y
+  `Engine::log_layer()`, que manda `warn`/`error` a las UIs como aviso `log` (WebSocket y app).
+- **TD-007:** `--upstream-ca <pem|der>` repetible y `--insecure-upstream` (con aviso).
+- **TD-008:** `Mitm` cachea el `Arc<ServerConfig>` por host (LRU de 1024). Se hizo sin perfil previo
+  porque el cambio es chico y quita un parseo de clave por handshake.
+- **TD-010:** con `local_site_ca`, un `CONNECT proxyrr.cert:443` se termina con una hoja de la CA aunque
+  el MITM esté apagado; el resto del tráfico sigue en túnel. Tests `local_site_over_https_without_mitm`
+  y `local_ca_never_decrypts_other_hosts`.

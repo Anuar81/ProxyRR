@@ -11,6 +11,8 @@ use proxyrr_store::{FlowStore, FlowSummary, StoreLimits};
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::{Mutex, broadcast};
 
+use crate::log::{LogLayer, LogLevel};
+
 /// Capacidad de los canales del engine. Un suscriptor más atrasado recibe `Lagged`.
 const CHANNEL_CAPACITY: usize = 4096;
 
@@ -70,6 +72,13 @@ pub enum Notice {
     Cleared,
     /// El proxy se prendió o apagó.
     Proxy(ProxyStatus),
+    /// Advertencia o error del motor (TD-006).
+    Log {
+        /// Nivel.
+        level: LogLevel,
+        /// Texto, con los campos del evento.
+        message: String,
+    },
 }
 
 /// Errores al manejar el proxy.
@@ -255,6 +264,19 @@ impl Engine {
     pub fn clear(&self) {
         self.store.clear();
         let _ = self.notices.send(Notice::Cleared);
+    }
+
+    /// Capa de `tracing` que publica los `warn`/`error` del motor como [`Notice::Log`]. Se instala
+    /// una vez, junto al subscriber del proceso.
+    #[must_use]
+    pub fn log_layer(&self) -> LogLayer {
+        LogLayer::new(self.notices.clone())
+    }
+
+    /// HAR 1.2 con todos los flujos HTTP guardados.
+    #[must_use]
+    pub fn har(&self) -> serde_json::Value {
+        crate::har::to_har(&self.store.snapshot())
     }
 }
 

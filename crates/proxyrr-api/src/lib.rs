@@ -12,6 +12,8 @@
 
 mod dto;
 mod engine;
+mod har;
+mod log;
 mod server;
 
 pub use dto::{
@@ -21,4 +23,6 @@ pub use dto::{
 pub use engine::{
     Engine, EngineError, EngineOptions, EngineStatus, Notice, ProxySettings, ProxyStatus,
 };
+pub use har::to_har;
+pub use log::{LogLayer, LogLevel};
 pub use server::{ApiConfig, ApiError, ApiServer, DEFAULT_API_PORT};

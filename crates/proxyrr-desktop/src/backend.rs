@@ -20,6 +20,15 @@ use proxyrr_store::{Decoded, StoredFlow, decode_body};
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 
+use crate::android::{Android, ConfiguredDto, DevicesDto};
+
+/// Carpeta de descargas del usuario, si existe.
+fn downloads_dir() -> Option<PathBuf> {
+    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })?;
+    let dir = PathBuf::from(home).join("Downloads");
+    dir.is_dir().then_some(dir)
+}
+
 /// Texto máximo que se manda a la vista (el resto se ofrece como "exportar").
 pub const MAX_TEXT_VIEW: usize = 2 * 1024 * 1024;
 /// Bytes máximos para la vista hexadecimal.
@@ -28,11 +37,14 @@ pub const MAX_HEX_VIEW: usize = 64 * 1024;
 /// Estado de la app.
 pub struct Backend {
     engine: Arc<Engine>,
+    ca: Arc<CertificateAuthority>,
     files: CaFiles,
     pem: PathBuf,
+    data_dir: PathBuf,
     os: Os,
     linux: LinuxTools,
     runner: Box<dyn Runner + Send + Sync>,
+    android: Android,
 }
 
 impl std::fmt::Debug for Backend {
@@ -171,13 +183,15 @@ impl Backend {
         os: Os,
         runner: Box<dyn Runner + Send + Sync>,
     ) -> Result<Self, String> {
-        let ca = CertificateAuthority::load_or_create(data_dir).map_err(|e| e.to_string())?;
+        let ca =
+            Arc::new(CertificateAuthority::load_or_create(data_dir).map_err(|e| e.to_string())?);
         let files = CaFiles::from_ca(&ca).map_err(|e| e.to_string())?;
         let site: Arc<dyn LocalSite> = Arc::new(CertSite::new(files.clone()));
         let engine = Engine::new(EngineOptions {
-            ca: Some(Arc::new(ca)),
+            ca: Some(Arc::clone(&ca)),
             proxy: ProxyConfig {
                 local_site: Some(site),
+                local_site_ca: Some(Arc::clone(&ca)),
                 ..ProxyConfig::default()
             },
             ..EngineOptions::default()
@@ -189,12 +203,74 @@ impl Backend {
         };
         Ok(Self {
             engine: Arc::new(engine),
+            ca,
             files,
             pem: data_dir.join(CA_CERT_FILE),
+            data_dir: data_dir.to_path_buf(),
             os,
             linux,
             runner,
+            android: Android::new(data_dir),
         })
+    }
+
+    /// Capa de `tracing` que manda los avisos del motor a la ventana.
+    #[must_use]
+    pub fn log_layer(&self) -> proxyrr_api::LogLayer {
+        self.engine.log_layer()
+    }
+
+    /// Guarda todos los flujos HTTP como HAR en la carpeta de descargas (o en el directorio de
+    /// datos si no hay) y devuelve la ruta.
+    ///
+    /// # Errors
+    /// Si no se pudo escribir el archivo.
+    pub fn export_har(&self) -> Result<String, String> {
+        let dir = downloads_dir().unwrap_or_else(|| self.data_dir.clone());
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        let path = dir.join(format!("proxyrr-{stamp}.har"));
+        let json = serde_json::to_vec_pretty(&self.engine.har()).map_err(|e| e.to_string())?;
+        std::fs::write(&path, json)
+            .map_err(|e| format!("no se pudo escribir {}: {e}", path.display()))?;
+        Ok(path.display().to_string())
+    }
+
+    /// Emuladores y dispositivos Android.
+    #[must_use]
+    pub fn android_devices(&self) -> DevicesDto {
+        self.android.devices()
+    }
+
+    /// Fija la ruta de `adb` (vacía: buscarla sola) y vuelve a listar.
+    ///
+    /// # Errors
+    /// Ruta inválida.
+    pub fn set_adb_path(&self, path: &str) -> Result<DevicesDto, String> {
+        self.android.set_adb_path(path)?;
+        Ok(self.android.devices())
+    }
+
+    /// Configura un dispositivo para el proxy en `port`.
+    ///
+    /// # Errors
+    /// Si `adb` falla.
+    pub fn android_configure(&self, serial: &str, port: u16) -> Result<ConfiguredDto, String> {
+        self.android.configure(&self.ca, serial, port)
+    }
+
+    /// Quita el proxy de un dispositivo.
+    ///
+    /// # Errors
+    /// Si `adb` falla.
+    pub fn android_revert(&self, serial: &str) -> Result<(), String> {
+        self.android.revert(serial)
+    }
+
+    /// Revierte todos los dispositivos configurados (al cerrar).
+    pub fn revert_android(&self) {
+        self.android.revert_all();
     }
 
     /// Avisos del engine (para reenviarlos a la ventana).

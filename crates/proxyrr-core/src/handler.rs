@@ -3,7 +3,7 @@
 use std::convert::Infallible;
 use std::error::Error as StdError;
 use std::io;
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -20,9 +20,10 @@ use hyper_rustls::{HttpsConnector, HttpsConnectorBuilder};
 use hyper_util::client::legacy::Client;
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::server::Acceptor;
-use rustls::{ClientConfig, RootCertStore};
-use rustls_pki_types::CertificateDer;
+use rustls::{ClientConfig, DigitallySignedStruct, RootCertStore, SignatureScheme};
+use rustls_pki_types::{CertificateDer, ServerName, UnixTime};
 use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
 use tokio::sync::broadcast;
@@ -30,16 +31,17 @@ use tokio::time::timeout;
 use tokio_rustls::LazyConfigAcceptor;
 
 use crate::capture::{Recorder, Side, Tap, headers_vec};
-use crate::config::{FlowIds, ProxyConfig};
+use crate::config::{FlowIds, MitmConfig, ProxyConfig};
 use crate::event::{FlowEvent, HttpFlow, TunnelFlow};
+use crate::guard::{GuardedConnector, LoopError, SelfGuard};
 use crate::headers::strip_hop_by_hop;
-use crate::local::{self, LocalRequest, LocalSite};
+use crate::lifecycle::{Phase, Tracker};
+use crate::local::{self, LOCAL_HOST, LocalRequest, LocalSite};
 use crate::mitm::{Mitm, Prefixed, TLS_HANDSHAKE, crypto_provider, describe_client_tls_error};
 
 pub(crate) type ProxyBody = BoxBody<Bytes, hyper::Error>;
-type UpstreamClient = Client<HttpsConnector<HttpConnector>, Recorder<Incoming>>;
+type UpstreamClient = Client<HttpsConnector<GuardedConnector>, Recorder<Incoming>>;
 
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(90);
 /// Tiempo máximo para recibir los headers de un request (corta conexiones colgadas / slowloris).
 pub(crate) const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(30);
@@ -51,13 +53,17 @@ const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 /// Estado compartido por todas las conexiones de una instancia.
 #[derive(Debug)]
 pub(crate) struct Context {
-    local_addr: SocketAddr,
+    guard: SelfGuard,
     events: broadcast::Sender<FlowEvent>,
     next_id: FlowIds,
     client: UpstreamClient,
+    connect_timeout: Duration,
     mitm: Option<Mitm>,
+    /// TLS de `https://proxyrr.cert` con el MITM apagado (TD-010).
+    local_tls: Option<Mitm>,
     max_body_capture: usize,
     local_site: Option<Arc<dyn LocalSite>>,
+    tracker: Tracker,
 }
 
 impl Context {
@@ -65,29 +71,50 @@ impl Context {
         config: &ProxyConfig,
         local_addr: SocketAddr,
         events: broadcast::Sender<FlowEvent>,
+        tracker: Tracker,
     ) -> io::Result<Self> {
+        let guard = SelfGuard::new(local_addr);
         let mut http = HttpConnector::new();
-        http.set_connect_timeout(Some(CONNECT_TIMEOUT));
+        http.set_connect_timeout(Some(config.connect_timeout));
         http.set_nodelay(true);
         http.enforce_http(false);
         let connector = HttpsConnectorBuilder::new()
-            .with_tls_config(upstream_tls(&config.upstream_roots)?)
+            .with_tls_config(upstream_tls(
+                &config.upstream_roots,
+                config.insecure_upstream,
+            )?)
             .https_or_http()
             .enable_http1()
-            .wrap_connector(http);
+            .wrap_connector(GuardedConnector::new(http, guard));
         let client = Client::builder(TokioExecutor::new())
             .pool_idle_timeout(POOL_IDLE_TIMEOUT)
             .pool_timer(TokioTimer::new())
             .build(connector);
+        if config.insecure_upstream {
+            tracing::warn!(
+                "verificación de certificados de los orígenes DESACTIVADA (--insecure-upstream)"
+            );
+        }
+        let local_tls = match (&config.local_site, &config.local_site_ca) {
+            (Some(_), Some(ca)) => Some(Mitm::new(&MitmConfig::new(Arc::clone(ca)))),
+            _ => None,
+        };
         Ok(Self {
-            local_addr,
+            guard,
             events,
             next_id: config.flow_ids.clone(),
             client,
+            connect_timeout: config.connect_timeout,
             mitm: config.mitm.as_ref().map(Mitm::new),
+            local_tls,
             max_body_capture: config.max_body_capture,
             local_site: config.local_site.clone(),
+            tracker,
         })
+    }
+
+    pub(crate) fn tracker(&self) -> &Tracker {
+        &self.tracker
     }
 
     fn next_id(&self) -> u64 {
@@ -98,23 +125,101 @@ impl Context {
         // Sin suscriptores `send` falla; no es un error del proxy.
         let _ = self.events.send(event);
     }
+
+    /// MITM con el que se termina el TLS de un túnel a `host`, si corresponde descifrarlo.
+    fn mitm_for(&self, host: &str) -> Option<(&Mitm, bool)> {
+        if let Some(mitm) = &self.mitm
+            && !mitm.is_bypassed(host)
+        {
+            return Some((mitm, false));
+        }
+        // Sin MITM (o con el host en bypass), `proxyrr.cert` igual se termina para servir la página.
+        self.local_tls
+            .as_ref()
+            .filter(|_| host.eq_ignore_ascii_case(LOCAL_HOST))
+            .map(|mitm| (mitm, true))
+    }
 }
 
 /// TLS hacia los orígenes: raíces del SO + las extra de la configuración. El ALPN (solo HTTP/1.1)
 /// lo fija `HttpsConnectorBuilder::enable_http1`, que exige recibirlo vacío.
-fn upstream_tls(extra_roots: &[Vec<u8>]) -> io::Result<ClientConfig> {
+fn upstream_tls(extra_roots: &[Vec<u8>], insecure: bool) -> io::Result<ClientConfig> {
+    let builder = ClientConfig::builder_with_provider(crypto_provider())
+        .with_safe_default_protocol_versions()
+        .map_err(io::Error::other)?;
+    if insecure {
+        return Ok(builder
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(AcceptAnyCert(crypto_provider())))
+            .with_no_client_auth());
+    }
     let mut roots = RootCertStore::empty();
     // Un certificado del SO que no se puede interpretar se ignora; el resto sirve igual.
     roots.add_parsable_certificates(rustls_native_certs::load_native_certs().certs);
-    roots.add_parsable_certificates(
+    let (added, ignored) = roots.add_parsable_certificates(
         extra_roots
             .iter()
             .map(|der| CertificateDer::from(der.clone())),
     );
-    ClientConfig::builder_with_provider(crypto_provider())
-        .with_safe_default_protocol_versions()
-        .map_err(io::Error::other)
-        .map(|builder| builder.with_root_certificates(roots).with_no_client_auth())
+    if ignored > 0 {
+        tracing::warn!(
+            added,
+            ignored,
+            "algunos certificados de --upstream-ca no se pudieron usar"
+        );
+    }
+    Ok(builder.with_root_certificates(roots).with_no_client_auth())
+}
+
+/// Verificador que acepta cualquier certificado del origen (solo `--insecure-upstream`). Las firmas
+/// del handshake sí se verifican, así que la conexión sigue siendo con quien tiene la clave del
+/// certificado presentado; lo que no se comprueba es que ese certificado sea legítimo.
+#[derive(Debug)]
+struct AcceptAnyCert(Arc<rustls::crypto::CryptoProvider>);
+
+impl ServerCertVerifier for AcceptAnyCert {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: UnixTime,
+    ) -> Result<ServerCertVerified, rustls::Error> {
+        Ok(ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(
+            message,
+            cert,
+            dss,
+            &self.0.signature_verification_algorithms,
+        )
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &self.0.signature_verification_algorithms,
+        )
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.0.signature_verification_algorithms.supported_schemes()
+    }
 }
 
 /// Rechazo generado por el proxy (no por el origen).
@@ -184,7 +289,7 @@ pub(crate) async fn handle(
     Ok(if req.method() == Method::CONNECT {
         tunnel(req, ctx).await
     } else {
-        let check = check_http_target(req.uri(), ctx.local_addr);
+        let check = check_http_target(req.uri(), &ctx.guard);
         exchange(req, ctx, check).await
     })
 }
@@ -248,6 +353,9 @@ async fn send_upstream(
     // El cliente upstream habla HTTP/1.1 aunque el navegador haya venido en 1.0.
     *req.version_mut() = Version::HTTP_11;
     ctx.client.request(req).await.map_err(|e| {
+        if is_loop(&e) {
+            return loop_detected();
+        }
         Reject::new(
             StatusCode::BAD_GATEWAY,
             format!("ProxyRR no pudo llegar al origen: {}", error_chain(&e)),
@@ -261,24 +369,22 @@ async fn tunnel(req: Request<Incoming>, ctx: &Arc<Context>) -> Response<ProxyBod
         authority: req.uri().to_string(),
         started: Instant::now(),
     };
-    let target = match check_tunnel_target(req.uri(), ctx.local_addr) {
+    let target = match check_tunnel_target(req.uri(), &ctx.guard) {
         Ok(target) => target,
         Err(reject) => return tunnel_rejected(ctx, &log, reject),
     };
 
-    if let Some(mitm) = &ctx.mitm
-        && !mitm.is_bypassed(&target.host)
-    {
+    if ctx.mitm_for(&target.host).is_some() {
         // Con MITM se responde enseguida: qué hacer se decide al ver el primer byte del cliente.
         tokio::spawn(intercept(req, Arc::clone(ctx), target, log));
         return ok_empty();
     }
 
     // Túnel opaco: se conecta ANTES de responder, para poder devolver 502/504.
-    match connect_upstream(&target.authority).await {
+    match connect_upstream(&target.authority, ctx).await {
         Ok(upstream) => {
             log.emit(ctx, StatusCode::OK, None, false);
-            tokio::spawn(splice_upgrade(req, upstream));
+            tokio::spawn(splice_upgrade(req, upstream, Arc::clone(ctx)));
             ok_empty()
         }
         Err(reject) => tunnel_rejected(ctx, &log, reject),
@@ -306,7 +412,7 @@ async fn intercept(req: Request<Incoming>, ctx: Arc<Context>, target: Target, lo
     };
     let is_tls = prefix.first() == Some(&TLS_HANDSHAKE);
     let stream = Prefixed::new(prefix, client);
-    let Some(mitm) = ctx.mitm.as_ref().filter(|_| is_tls) else {
+    let Some((mitm, local_only)) = ctx.mitm_for(&target.host).filter(|_| is_tls) else {
         return splice_stream(stream, &ctx, &target, &log).await;
     };
 
@@ -326,6 +432,12 @@ async fn intercept(req: Request<Incoming>, ctx: Arc<Context>, target: Target, lo
         .client_hello()
         .server_name()
         .map_or_else(|| target.host.clone(), str::to_owned);
+    // Solo el sitio local: un SNI distinto de `proxyrr.cert` no se descifra con la CA local.
+    if local_only && !leaf_host.eq_ignore_ascii_case(LOCAL_HOST) {
+        return handshake_failed(format!(
+            "SNI {leaf_host} en un túnel a {LOCAL_HOST}: no se descifra sin --mitm"
+        ));
+    }
     let config = match mitm.server_config(&leaf_host) {
         Ok(config) => config,
         Err(message) => return handshake_failed(message),
@@ -338,17 +450,26 @@ async fn intercept(req: Request<Incoming>, ctx: Arc<Context>, target: Target, lo
     log.emit(&ctx, StatusCode::OK, None, true);
 
     let base = target.base_url();
+    let tracker = ctx.tracker().clone();
     let service = service_fn(move |req| {
         let ctx = Arc::clone(&ctx);
         let base = base.clone();
         async move { Ok::<_, Infallible>(decrypted(req, &ctx, &base).await) }
     });
-    // Los errores de la conexión descifrada (cliente que corta) no afectan al resto.
-    let _ = http1::Builder::new()
+    let conn = http1::Builder::new()
         .timer(TokioTimer::new())
         .header_read_timeout(HEADER_READ_TIMEOUT)
-        .serve_connection(TokioIo::new(tls), service)
-        .await;
+        .serve_connection(TokioIo::new(tls), service);
+    tokio::pin!(conn);
+    // Los errores de la conexión descifrada (cliente que corta) no afectan al resto.
+    tokio::select! {
+        _ = conn.as_mut() => return,
+        () = tracker.reached(Phase::Draining) => conn.as_mut().graceful_shutdown(),
+    }
+    tokio::select! {
+        _ = conn => {}
+        () = tracker.reached(Phase::Closing) => {}
+    }
 }
 
 /// Un request dentro del túnel descifrado: llega en forma de origen y va a `https://host[:puerto]`.
@@ -373,44 +494,55 @@ async fn splice_stream(
     target: &Target,
     log: &TunnelLog,
 ) {
-    match connect_upstream(&target.authority).await {
+    match connect_upstream(&target.authority, ctx).await {
         Ok(mut upstream) => {
             log.emit(ctx, StatusCode::OK, None, false);
-            // Un reset de cualquiera de los lados es el final normal de un túnel.
-            let _ = tokio::io::copy_bidirectional(&mut client, &mut upstream).await;
+            // Un túnel no tiene requests que terminar: al apagar se cierra enseguida.
+            tokio::select! {
+                // Un reset de cualquiera de los lados es el final normal de un túnel.
+                _ = tokio::io::copy_bidirectional(&mut client, &mut upstream) => {}
+                () = ctx.tracker().reached(Phase::Draining) => {}
+            }
         }
         // El cliente ya recibió 200: solo queda cerrar y registrar el motivo.
         Err(reject) => log.emit(ctx, reject.status, Some(reject.message), false),
     }
 }
 
-/// Conecta con el destino de un túnel, con timeout.
-async fn connect_upstream(authority: &str) -> Result<TcpStream, Reject> {
-    match timeout(CONNECT_TIMEOUT, TcpStream::connect(authority)).await {
-        Ok(Ok(upstream)) => Ok(upstream),
+/// Conecta con el destino de un túnel, con timeout, y rechaza si resolvió al propio proxy.
+async fn connect_upstream(authority: &str, ctx: &Context) -> Result<TcpStream, Reject> {
+    let limit = ctx.connect_timeout;
+    match timeout(limit, TcpStream::connect(authority)).await {
+        Ok(Ok(upstream)) => match upstream.peer_addr() {
+            Ok(peer) if ctx.guard.is_self_addr(peer) => Err(loop_detected()),
+            _ => Ok(upstream),
+        },
         Ok(Err(e)) => Err(Reject::new(
             StatusCode::BAD_GATEWAY,
             format!("ProxyRR no pudo conectar con {authority}: {e}"),
         )),
         Err(_) => Err(Reject::new(
             StatusCode::GATEWAY_TIMEOUT,
-            format!("ProxyRR: {authority} no respondió en {CONNECT_TIMEOUT:?}"),
+            format!("ProxyRR: {authority} no respondió en {limit:?}"),
         )),
     }
 }
 
 /// Copia bytes entre el cliente (una vez hecho el upgrade) y el destino hasta que alguno cierre.
-async fn splice_upgrade(req: Request<Incoming>, mut upstream: TcpStream) {
+async fn splice_upgrade(req: Request<Incoming>, mut upstream: TcpStream, ctx: Arc<Context>) {
     // Si el cliente cortó antes del upgrade no hay nada que copiar.
     if let Ok(upgraded) = hyper::upgrade::on(req).await {
         let mut client = TokioIo::new(upgraded);
-        // Un reset de cualquiera de los lados es el final normal de un túnel.
-        let _ = tokio::io::copy_bidirectional(&mut client, &mut upstream).await;
+        tokio::select! {
+            // Un reset de cualquiera de los lados es el final normal de un túnel.
+            _ = tokio::io::copy_bidirectional(&mut client, &mut upstream) => {}
+            () = ctx.tracker().reached(Phase::Draining) => {}
+        }
     }
 }
 
 /// Valida un request no-CONNECT: forma absoluta, esquema `http` y que no apunte al propio proxy.
-fn check_http_target(uri: &Uri, local: SocketAddr) -> Result<(), Reject> {
+fn check_http_target(uri: &Uri, guard: &SelfGuard) -> Result<(), Reject> {
     let Some(scheme) = uri.scheme_str() else {
         return Err(Reject::new(
             StatusCode::BAD_REQUEST,
@@ -431,21 +563,21 @@ fn check_http_target(uri: &Uri, local: SocketAddr) -> Result<(), Reject> {
         ));
     };
     // El esquema ya se validó como `http`, así que sin puerto explícito el puerto es 80 (RFC 9110 §4.2.1).
-    if is_self(authority.host(), authority.port_u16().unwrap_or(80), local) {
+    if guard.is_self_host(authority.host(), authority.port_u16().unwrap_or(80)) {
         return Err(loop_detected());
     }
     Ok(())
 }
 
 /// Valida el destino de un CONNECT.
-fn check_tunnel_target(uri: &Uri, local: SocketAddr) -> Result<Target, Reject> {
+fn check_tunnel_target(uri: &Uri, guard: &SelfGuard) -> Result<Target, Reject> {
     let Some((authority, port)) = uri.authority().and_then(|a| Some((a, a.port_u16()?))) else {
         return Err(Reject::new(
             StatusCode::BAD_REQUEST,
             "ProxyRR: CONNECT requiere un destino host:puerto.",
         ));
     };
-    if is_self(authority.host(), port, local) {
+    if guard.is_self_host(authority.host(), port) {
         return Err(loop_detected());
     }
     Ok(Target {
@@ -462,18 +594,16 @@ fn loop_detected() -> Reject {
     )
 }
 
-/// `true` si `host:port` es el propio proxy. Sin resolución DNS: cubre `localhost`, loopback y la
-/// IP exacta de escucha.
-fn is_self(host: &str, port: u16, local: SocketAddr) -> bool {
-    if port != local.port() {
-        return false;
+/// `true` si en la cadena de causas hay un [`LoopError`] (el destino resolvió al propio proxy).
+fn is_loop(error: &(dyn StdError + 'static)) -> bool {
+    let mut current = Some(error);
+    while let Some(e) = current {
+        if e.downcast_ref::<LoopError>().is_some() {
+            return true;
+        }
+        current = e.source();
     }
-    if host.eq_ignore_ascii_case("localhost") {
-        return true;
-    }
-    let bare = host.trim_start_matches('[').trim_end_matches(']');
-    bare.parse::<IpAddr>()
-        .is_ok_and(|ip| ip.is_loopback() || ip == local.ip())
+    false
 }
 
 fn content_length(headers: &HeaderMap) -> Option<u64> {
@@ -550,42 +680,39 @@ fn local_response<B>(req: &Request<B>, ctx: &Context) -> Option<Response<ProxyBo
 mod tests {
     use super::*;
 
-    fn local() -> SocketAddr {
-        "127.0.0.1:9090".parse().unwrap()
+    fn local() -> SelfGuard {
+        SelfGuard::new("127.0.0.1:9090".parse().unwrap())
     }
 
     #[test]
-    fn detects_self_by_loopback_localhost_and_listen_ip() {
-        assert!(is_self("127.0.0.1", 9090, local()));
-        assert!(is_self("LOCALHOST", 9090, local()));
-        assert!(is_self("[::1]", 9090, local()));
-        let lan: SocketAddr = "192.168.1.10:9090".parse().unwrap();
-        assert!(is_self("192.168.1.10", 9090, lan));
-    }
-
-    #[test]
-    fn other_port_or_host_is_not_self() {
-        assert!(!is_self("127.0.0.1", 8080, local()));
-        assert!(!is_self("example.com", 9090, local()));
+    fn loop_errors_are_found_in_the_cause_chain() {
+        #[derive(Debug, thiserror::Error)]
+        #[error("envoltorio")]
+        struct Wrapper(#[source] LoopError);
+        let wrapped = Wrapper(LoopError("127.0.0.1:9090".parse().unwrap()));
+        assert!(is_loop(&wrapped));
+        assert!(!is_loop(&io::Error::other("otro")));
     }
 
     #[test]
     fn http_target_rules() {
         let ok: Uri = "http://example.com/a?b=1".parse().unwrap();
-        assert!(check_http_target(&ok, local()).is_ok());
+        assert!(check_http_target(&ok, &local()).is_ok());
         let origin_form: Uri = "/a".parse().unwrap();
         assert_eq!(
-            check_http_target(&origin_form, local()).unwrap_err().status,
+            check_http_target(&origin_form, &local())
+                .unwrap_err()
+                .status,
             StatusCode::BAD_REQUEST
         );
         let https: Uri = "https://example.com/".parse().unwrap();
         assert_eq!(
-            check_http_target(&https, local()).unwrap_err().status,
+            check_http_target(&https, &local()).unwrap_err().status,
             StatusCode::BAD_REQUEST
         );
         let me: Uri = "http://localhost:9090/".parse().unwrap();
         assert_eq!(
-            check_http_target(&me, local()).unwrap_err().status,
+            check_http_target(&me, &local()).unwrap_err().status,
             StatusCode::LOOP_DETECTED
         );
     }
@@ -594,11 +721,11 @@ mod tests {
     fn tunnel_target_requires_port() {
         let no_port: Uri = "example.com".parse().unwrap();
         assert_eq!(
-            check_tunnel_target(&no_port, local()).unwrap_err().status,
+            check_tunnel_target(&no_port, &local()).unwrap_err().status,
             StatusCode::BAD_REQUEST
         );
         let ok: Uri = "example.com:443".parse().unwrap();
-        let target = check_tunnel_target(&ok, local()).unwrap();
+        let target = check_tunnel_target(&ok, &local()).unwrap();
         assert_eq!(target.authority, "example.com:443");
         assert_eq!(target.base_url(), "https://example.com");
     }
@@ -606,7 +733,7 @@ mod tests {
     #[test]
     fn base_url_keeps_non_default_port_and_ipv6_brackets() {
         let uri: Uri = "[::1]:8443".parse().unwrap();
-        let target = check_tunnel_target(&uri, local()).unwrap();
+        let target = check_tunnel_target(&uri, &local()).unwrap();
         assert_eq!(target.base_url(), "https://[::1]:8443");
     }
 }

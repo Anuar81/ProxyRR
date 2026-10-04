@@ -192,6 +192,7 @@ fn router(state: AppState) -> Router {
         .route("/api/v1/flows", get(list_flows).delete(clear_flows))
         .route("/api/v1/flows/{id}", get(get_flow))
         .route("/api/v1/flows/{id}/{side}/body", get(get_body))
+        .route("/api/v1/har", get(har))
         .route(EVENTS_PATH, get(events))
         .fallback(|| async { Failure::new(StatusCode::NOT_FOUND, "not_found", "ruta desconocida") })
         .method_not_allowed_fallback(|| async {
@@ -371,6 +372,16 @@ async fn list_flows(
 async fn clear_flows(State(state): State<AppState>) -> StatusCode {
     state.engine.clear();
     StatusCode::NO_CONTENT
+}
+
+/// `GET /api/v1/har`: todos los flujos HTTP como HAR 1.2, para descargar.
+async fn har(State(state): State<AppState>) -> Response {
+    let mut response = Json(state.engine.har()).into_response();
+    response.headers_mut().insert(
+        header::CONTENT_DISPOSITION,
+        HeaderValue::from_static("attachment; filename=\"proxyrr.har\""),
+    );
+    response
 }
 
 fn parse_id(raw: &str) -> Result<u64, Failure> {

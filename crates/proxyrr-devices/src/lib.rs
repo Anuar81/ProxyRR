@@ -5,9 +5,9 @@
 //! - [`trust`]: instalar, quitar y verificar la CA en Windows, macOS y Linux.
 //! - [`guide`]: guías paso a paso por destino (iOS, Android, escritorio).
 //! - [`lan_ip`] y [`qr_text`]: datos para las guías de dispositivos físicos.
-//!
-//! La automatización de Android con `adb` llega con la spec 0002.
+//! - [`android`]: emuladores y dispositivos Android con `adb` (spec 0002).
 
+pub mod android;
 mod files;
 pub mod guide;
 mod net;

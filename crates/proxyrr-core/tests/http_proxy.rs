@@ -650,3 +650,166 @@ async fn local_site_is_served_by_the_proxy_and_captured() {
     assert_eq!(other.status(), 400, "fuera de /cert sigue siendo un proxy");
     proxy.shutdown().await;
 }
+
+// ---- Spec 0010: deuda técnica del motor (TD-001, TD-003, TD-004) ----
+
+#[tokio::test]
+async fn connect_timeout_is_configurable() {
+    // TEST-NET-1 (RFC 5737): no rutea a ningún lado. Según la red falla al instante (sin ruta)
+    // o queda colgado hasta el timeout; en ningún caso puede tardar más que el timeout pedido.
+    let proxy = Proxy::start(ProxyConfig {
+        listen: "127.0.0.1:0".parse().unwrap(),
+        connect_timeout: Duration::from_millis(300),
+        ..ProxyConfig::default()
+    })
+    .await
+    .unwrap();
+    let started = std::time::Instant::now();
+    let (_, head) = connect(proxy.local_addr(), "192.0.2.1:81").await;
+    assert!(
+        head.starts_with("HTTP/1.1 504") || head.starts_with("HTTP/1.1 502"),
+        "{head}"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "{:?}",
+        started.elapsed()
+    );
+}
+
+#[test]
+fn default_connect_timeout_is_30_seconds() {
+    assert_eq!(
+        ProxyConfig::default().connect_timeout,
+        Duration::from_secs(30)
+    );
+}
+
+/// Primera IP no loopback de esta máquina (la de la ruta por defecto), si tiene red.
+fn lan_ip() -> Option<std::net::IpAddr> {
+    let socket = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    // `connect` en UDP no manda nada: solo elige la interfaz de salida.
+    socket.connect("192.0.2.1:9").ok()?;
+    let ip = socket.local_addr().ok()?.ip();
+    (!ip.is_loopback() && !ip.is_unspecified()).then_some(ip)
+}
+
+#[tokio::test]
+async fn all_interfaces_listener_detects_its_own_lan_ip() {
+    let proxy = Proxy::start(ProxyConfig {
+        listen: "0.0.0.0:0".parse().unwrap(),
+        ..ProxyConfig::default()
+    })
+    .await
+    .unwrap();
+    let port = proxy.local_addr().port();
+    let local = SocketAddr::from(([127, 0, 0, 1], port));
+    let (_, head) = connect(local, &format!("127.0.0.1:{port}")).await;
+    assert!(head.starts_with("HTTP/1.1 508"), "{head}");
+    let Some(ip) = lan_ip() else {
+        eprintln!("sin IP de LAN: se omite la parte de la IP propia");
+        return;
+    };
+    let me = SocketAddr::new(ip, port);
+    let (_, head) = connect(local, &me.to_string()).await;
+    assert!(head.starts_with("HTTP/1.1 508"), "{me}: {head}");
+    let reply = send(
+        local,
+        &format!("GET http://{me}/ HTTP/1.1\r\nHost: {me}\r\nConnection: close\r\n\r\n"),
+    )
+    .await;
+    assert_eq!(reply.status(), 508, "{}", reply.head);
+}
+
+#[tokio::test]
+async fn shutdown_closes_open_tunnels_promptly() {
+    let echo = start_echo().await;
+    let proxy = start_proxy().await;
+    let (mut stream, head) = connect(proxy.local_addr(), &echo.to_string()).await;
+    assert!(head.starts_with("HTTP/1.1 200"), "{head}");
+    let started = std::time::Instant::now();
+    proxy.shutdown_within(Duration::from_secs(10)).await;
+    // Un túnel no tiene requests que esperar: se cierra sin consumir el plazo.
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "{:?}",
+        started.elapsed()
+    );
+    let mut buf = [0u8; 8];
+    let n = timeout(LIMIT, stream.read(&mut buf))
+        .await
+        .unwrap()
+        .unwrap_or(0);
+    assert_eq!(n, 0, "el túnel debía quedar cerrado");
+}
+
+#[tokio::test]
+async fn shutdown_waits_for_in_flight_requests() {
+    let (origin, go) = start_raw_origin(
+        "HTTP/1.1 200 OK\r\nContent-Length: 11\r\nConnection: close\r\n\r\n",
+        "hola ",
+        Some("mundo!"),
+    )
+    .await;
+    let proxy = start_proxy().await;
+    let mut stream = TcpStream::connect(proxy.local_addr()).await.unwrap();
+    stream
+        .write_all(get(&format!("http://{origin}/lento"), &origin.to_string()).as_bytes())
+        .await
+        .unwrap();
+    // Esperar a que el request esté en curso (llegaron los headers) antes de apagar.
+    let mut seen = Vec::new();
+    let mut buf = [0u8; 256];
+    while !String::from_utf8_lossy(&seen).contains("hola") {
+        let n = timeout(LIMIT, stream.read(&mut buf))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_ne!(n, 0);
+        seen.extend_from_slice(&buf[..n]);
+    }
+    let shutdown = tokio::spawn(proxy.shutdown_within(Duration::from_secs(10)));
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(
+        !shutdown.is_finished(),
+        "el apagado no esperó el request en curso"
+    );
+    go.send(()).unwrap();
+    timeout(LIMIT, stream.read_to_end(&mut seen))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&seen).ends_with("hola mundo!"));
+    timeout(LIMIT, shutdown).await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn shutdown_cuts_what_outlives_the_grace_period() {
+    // Origen que manda headers y parte del body, y nunca termina.
+    let (origin, _never) = start_raw_origin(
+        "HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n",
+        "parcial",
+        None,
+    )
+    .await;
+    let proxy = start_proxy().await;
+    let mut stream = TcpStream::connect(proxy.local_addr()).await.unwrap();
+    stream
+        .write_all(get(&format!("http://{origin}/eterno"), &origin.to_string()).as_bytes())
+        .await
+        .unwrap();
+    let mut buf = [0u8; 256];
+    let n = timeout(LIMIT, stream.read(&mut buf))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_ne!(n, 0);
+    let started = std::time::Instant::now();
+    proxy.shutdown_within(Duration::from_millis(300)).await;
+    let elapsed = started.elapsed();
+    assert!(elapsed >= Duration::from_millis(300), "{elapsed:?}");
+    assert!(elapsed < Duration::from_secs(4), "{elapsed:?}");
+    let mut rest = Vec::new();
+    // Cortada: el cliente ve el cierre (EOF o reset), no se queda colgado.
+    let _ = timeout(LIMIT, stream.read_to_end(&mut rest)).await.unwrap();
+}

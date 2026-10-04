@@ -4,6 +4,7 @@ use std::fmt;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use proxyrr_cert::CertificateAuthority;
 
@@ -12,6 +13,9 @@ use crate::local::LocalSite;
 
 /// Puerto por defecto (el mismo que usan otras herramientas del rubro, así las guías coinciden).
 pub const DEFAULT_PORT: u16 = 9090;
+/// Timeout de conexión al origen por defecto: más que lo que espera un navegador antes de rendirse
+/// con un sitio lento, para que el proxy no corte antes que el cliente (TD-001).
+pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Configuración de una instancia del proxy.
 #[derive(Debug, Clone)]
@@ -24,6 +28,14 @@ pub struct ProxyConfig {
     /// Certificados raíz (DER) extra en los que confiar al hablar con orígenes HTTPS, además de los del
     /// SO. Útil para una CA corporativa o un servidor de desarrollo con CA propia.
     pub upstream_roots: Vec<Vec<u8>>,
+    /// No verificar el certificado de los orígenes HTTPS. Solo para desarrollo local: con esto
+    /// cualquiera en el camino puede hacerse pasar por el origen.
+    pub insecure_upstream: bool,
+    /// Tiempo máximo para conectar con un origen (repartido entre sus IPs si tiene varias).
+    pub connect_timeout: Duration,
+    /// CA con la que se termina el TLS de `https://proxyrr.cert` cuando el MITM está apagado. Con
+    /// MITM activo se usa la CA del MITM. `None`: sin MITM, `proxyrr.cert` por HTTPS no se sirve.
+    pub local_site_ca: Option<Arc<CertificateAuthority>>,
     /// Bytes máximos que se guardan de cada body (el resto se reenvía igual, sin guardar).
     pub max_body_capture: usize,
     /// Contador de ids de flujo. Compartir el mismo entre varias instancias (reinicios) garantiza ids
@@ -57,6 +69,9 @@ impl Default for ProxyConfig {
             listen: SocketAddr::from((Ipv4Addr::LOCALHOST, DEFAULT_PORT)),
             mitm: None,
             upstream_roots: Vec::new(),
+            insecure_upstream: false,
+            connect_timeout: DEFAULT_CONNECT_TIMEOUT,
+            local_site_ca: None,
             max_body_capture: DEFAULT_MAX_BODY_CAPTURE,
             flow_ids: FlowIds::default(),
             local_site: None,

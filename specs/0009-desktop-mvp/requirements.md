@@ -1,6 +1,6 @@
 # 0009 — Desktop MVP
 
-- Estado: en curso
+- Estado: terminada (PR #8)
 - Fase: F2
 - Depende de: 0006, 0007, 0008
 

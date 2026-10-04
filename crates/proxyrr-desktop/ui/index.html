@@ -20,6 +20,7 @@
     <span class="spacer"></span>
     <input id="filter" type="search" placeholder="Filtrar (texto, status:4xx, method:post, -excluir)" aria-label="Filtrar flujos">
     <button id="clear" type="button" title="Borrar todos los flujos">Limpiar</button>
+    <button id="har" type="button" title="Guardar todos los flujos HTTP como HAR en Descargas">Exportar HAR</button>
     <button id="cert" type="button">Certificado…</button>
   </header>
 
@@ -49,6 +50,8 @@
   <footer class="statusbar">
     <span id="count">0 flujos</span>
     <span id="dropped" class="warn" hidden></span>
+    <span id="log" class="warn" role="status" hidden></span>
+    <span id="info" class="ok" role="status"></span>
     <span id="error" class="error" role="alert"></span>
   </footer>
 
@@ -59,8 +62,9 @@
         <button type="button" data-target="this">Este equipo</button>
         <button type="button" data-target="ios">iPhone / iPad</button>
         <button type="button" data-target="ios-simulator">Simulador de iOS</button>
-        <button type="button" data-target="android-emulator">Emulador de Android</button>
-        <button type="button" data-target="android-device">Android físico</button>
+        <button type="button" data-target="android">Android con un clic (adb)</button>
+        <button type="button" data-target="android-emulator">Emulador de Android (manual)</button>
+        <button type="button" data-target="android-device">Android físico (manual)</button>
       </nav>
       <div id="cert-body" class="dlg-body"></div>
       <button id="cert-close" class="dlg-close" type="button" aria-label="Cerrar">✕</button>

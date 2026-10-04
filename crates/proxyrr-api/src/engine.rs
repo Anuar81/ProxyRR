@@ -6,8 +6,9 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use proxyrr_cert::CertificateAuthority;
-use proxyrr_core::{FlowEvent, MitmConfig, Proxy, ProxyConfig};
-use proxyrr_store::{FlowStore, FlowSummary, StoreLimits};
+use proxyrr_core::{FlowEvent, FlowHook, MitmConfig, Proxy, ProxyConfig, Replay};
+use proxyrr_rules::Rules;
+use proxyrr_store::{FlowStore, FlowSummary, StoreLimits, StoredFlow};
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::{Mutex, broadcast};
 
@@ -108,8 +109,10 @@ pub struct EngineOptions {
     /// CA para el MITM. Sin CA, `mitm: true` da [`EngineError::NoCa`].
     pub ca: Option<Arc<CertificateAuthority>>,
     /// Plantilla del proxy (`upstream_roots`, `max_body_capture`, `flow_ids`). `listen` y `mitm` se
-    /// toman de cada [`ProxySettings`].
+    /// toman de cada [`ProxySettings`]; `hook` se reemplaza por `rules`.
     pub proxy: ProxyConfig,
+    /// Reglas (spec 0011). Sin esto, unas en memoria y vacías.
+    pub rules: Option<Arc<Rules>>,
 }
 
 impl fmt::Debug for EngineOptions {
@@ -118,6 +121,7 @@ impl fmt::Debug for EngineOptions {
             .field("limits", &self.limits)
             .field("ca", &self.ca.is_some())
             .field("proxy", &self.proxy)
+            .field("rules", &self.rules.is_some())
             .finish()
     }
 }
@@ -132,6 +136,7 @@ struct State {
 pub struct Engine {
     store: Arc<FlowStore>,
     ca: Option<Arc<CertificateAuthority>>,
+    rules: Arc<Rules>,
     template: ProxyConfig,
     state: Mutex<State>,
     notices: broadcast::Sender<Notice>,
@@ -153,14 +158,72 @@ impl Engine {
     pub fn new(options: EngineOptions) -> Self {
         let mut template = options.proxy;
         template.mitm = None;
+        let rules = options
+            .rules
+            .unwrap_or_else(|| Arc::new(Rules::in_memory()));
+        template.hook = Some(Arc::clone(&rules) as Arc<dyn FlowHook>);
         Self {
             store: Arc::new(FlowStore::new(options.limits)),
             ca: options.ca,
+            rules,
             template,
             state: Mutex::new(State::default()),
             notices: broadcast::channel(CHANNEL_CAPACITY).0,
             flows: broadcast::channel(CHANNEL_CAPACITY).0,
         }
+    }
+
+    /// Reglas vivas: cambiarlas aplica al próximo request.
+    #[must_use]
+    pub fn rules(&self) -> &Arc<Rules> {
+        &self.rules
+    }
+
+    /// Manda un request armado a mano por el proxy (se le aplican las reglas y se captura).
+    ///
+    /// # Errors
+    /// Proxy apagado, o método/URL inválidos.
+    pub async fn replay(&self, request: Replay) -> Result<u64, String> {
+        let state = self.state.lock().await;
+        let proxy = state
+            .proxy
+            .as_ref()
+            .ok_or("el proxy está apagado: prendelo para repetir requests")?;
+        proxy.replay(request)
+    }
+
+    /// Repite un flujo guardado tal cual (método, URL, headers y body del request).
+    ///
+    /// # Errors
+    /// Flujo que ya no está, túnel, body truncado o proxy apagado.
+    pub async fn replay_flow(&self, id: u64) -> Result<u64, String> {
+        let request = self.replay_request(id)?;
+        self.replay(request).await
+    }
+
+    /// El request de un flujo guardado, listo para repetirlo o editarlo.
+    ///
+    /// # Errors
+    /// Flujo que ya no está, túnel o body truncado.
+    pub fn replay_request(&self, id: u64) -> Result<Replay, String> {
+        let Some(StoredFlow::Http(record)) = self.store.get(id) else {
+            return Err(format!("el flujo {id} no está o es un túnel"));
+        };
+        let body = match &record.bodies {
+            Some(b) if b.request.truncated => {
+                return Err(format!(
+                    "el body del request {id} se guardó recortado: no se puede repetir igual"
+                ));
+            }
+            Some(b) => b.request.data.clone(),
+            None => bytes::Bytes::new(),
+        };
+        Ok(Replay {
+            method: record.head.method.clone(),
+            url: record.head.url.clone(),
+            headers: record.head.request_headers.clone(),
+            body,
+        })
     }
 
     /// Store de flujos.

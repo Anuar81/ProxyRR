@@ -90,6 +90,8 @@ pub struct FlowSummary {
     pub in_progress: bool,
     /// `true` si es un túnel `CONNECT`.
     pub tunnel: bool,
+    /// Reglas que modificaron el flujo (spec 0011).
+    pub rules: Vec<String>,
 }
 
 impl From<&StoredFlow> for FlowSummary {
@@ -109,6 +111,7 @@ impl From<&StoredFlow> for FlowSummary {
                     .or(record.head.content_length),
                 in_progress: record.bodies.is_none(),
                 tunnel: false,
+                rules: record.head.rules.clone(),
             },
             StoredFlow::Tunnel(tunnel) => Self {
                 id: tunnel.id,
@@ -120,6 +123,7 @@ impl From<&StoredFlow> for FlowSummary {
                 response_size: None,
                 in_progress: false,
                 tunnel: true,
+                rules: Vec::new(),
             },
         }
     }
@@ -306,6 +310,7 @@ mod tests {
             request_headers: vec![("host".into(), "example.com".into())],
             status: 200,
             response_headers: Vec::new(),
+            rules: Vec::new(),
             error: None,
             elapsed: Duration::from_millis(5),
             content_length: Some(999),

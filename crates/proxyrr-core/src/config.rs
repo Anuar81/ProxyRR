@@ -9,6 +9,7 @@ use std::time::Duration;
 use proxyrr_cert::CertificateAuthority;
 
 use crate::capture::DEFAULT_MAX_BODY_CAPTURE;
+use crate::hook::FlowHook;
 use crate::local::LocalSite;
 
 /// Puerto por defecto (el mismo que usan otras herramientas del rubro, así las guías coinciden).
@@ -44,6 +45,8 @@ pub struct ProxyConfig {
     /// Sitio que el proxy responde él mismo (`http://proxyrr.cert/` y `/cert` directo). `None`: esos
     /// requests se tratan como cualquier otro.
     pub local_site: Option<Arc<dyn LocalSite>>,
+    /// Reglas que modifican el tráfico (spec 0011). `None`: el tráfico pasa sin cambios.
+    pub hook: Option<Arc<dyn FlowHook>>,
 }
 
 /// Contador de ids de flujo, compartible entre instancias del proxy. Empieza en 1.
@@ -75,6 +78,7 @@ impl Default for ProxyConfig {
             max_body_capture: DEFAULT_MAX_BODY_CAPTURE,
             flow_ids: FlowIds::default(),
             local_site: None,
+            hook: None,
         }
     }
 }

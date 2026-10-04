@@ -16,6 +16,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use bytes::Bytes;
 use proxyrr_core::Headers;
+use proxyrr_rules::Rule;
 use proxyrr_store::StoredFlow;
 use serde::Deserialize;
 use tokio::net::TcpListener;
@@ -191,7 +192,9 @@ fn router(state: AppState) -> Router {
         .route("/api/v1/proxy/stop", post(stop_proxy))
         .route("/api/v1/flows", get(list_flows).delete(clear_flows))
         .route("/api/v1/flows/{id}", get(get_flow))
+        .route("/api/v1/flows/{id}/replay", post(replay_flow))
         .route("/api/v1/flows/{id}/{side}/body", get(get_body))
+        .route("/api/v1/rules", get(get_rules).put(put_rules))
         .route("/api/v1/har", get(har))
         .route(EVENTS_PATH, get(events))
         .fallback(|| async { Failure::new(StatusCode::NOT_FOUND, "not_found", "ruta desconocida") })
@@ -387,6 +390,44 @@ async fn har(State(state): State<AppState>) -> Response {
 fn parse_id(raw: &str) -> Result<u64, Failure> {
     raw.parse()
         .map_err(|_| Failure::new(StatusCode::NOT_FOUND, "not_found", "id de flujo inválido"))
+}
+
+/// `GET /api/v1/rules`: reglas en orden.
+async fn get_rules(State(state): State<AppState>) -> Json<Vec<Rule>> {
+    Json(state.engine.rules().list())
+}
+
+/// `PUT /api/v1/rules`: reemplaza todas las reglas (aplican desde el próximo request).
+async fn put_rules(State(state): State<AppState>, body: Bytes) -> Result<Json<Vec<Rule>>, Failure> {
+    let rules: Vec<Rule> = serde_json::from_slice(&body)
+        .map_err(|e| Failure::new(StatusCode::BAD_REQUEST, "bad_request", e.to_string()))?;
+    state
+        .engine
+        .rules()
+        .replace(rules)
+        .map(Json)
+        .map_err(|e| Failure::new(StatusCode::UNPROCESSABLE_ENTITY, "invalid_rules", e))
+}
+
+/// `POST /api/v1/flows/{id}/replay`: repite el request; devuelve el id del flujo nuevo.
+async fn replay_flow(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Response, Failure> {
+    let id = parse_id(&id)?;
+    if state.engine.store().get(id).is_none() {
+        return Err(Failure::not_found(id));
+    }
+    let new_id = state
+        .engine
+        .replay_flow(id)
+        .await
+        .map_err(|e| Failure::new(StatusCode::CONFLICT, "replay_failed", e))?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(serde_json::json!({ "id": new_id })),
+    )
+        .into_response())
 }
 
 async fn get_flow(

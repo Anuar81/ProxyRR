@@ -14,6 +14,7 @@ use proxyrr_api::{ApiConfig, ApiServer, Engine, EngineOptions, ProxySettings};
 use proxyrr_cert::{CA_CERT_FILE, CertificateAuthority};
 use proxyrr_core::{FlowEvent, LocalSite, ProxyConfig};
 use proxyrr_devices::{CaFiles, CertSite};
+use proxyrr_rules::{Action, Rule, Rules};
 use tokio::sync::broadcast::error::RecvError;
 use tracing_subscriber::Layer as _;
 use tracing_subscriber::filter::LevelFilter;
@@ -73,6 +74,10 @@ struct StartArgs {
     /// y revertirlo al salir.
     #[arg(long, value_name = "SERIAL", num_args = 0..=1, default_missing_value = "auto")]
     android: Option<String>,
+    /// Archivo de reglas (Map Local, Map Remote, Block, No Caching, Breakpoint). Por defecto, el
+    /// `rules.json` del directorio de datos, el mismo que edita la app de escritorio.
+    #[arg(long, value_name = "ARCHIVO")]
+    rules: Option<PathBuf>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -197,7 +202,14 @@ fn run(cli: Cli) -> Result<(), String> {
             api_listen,
         } => {
             // La CA se carga siempre: sirve la página `proxyrr.cert` y la UI puede prender el MITM más tarde.
-            let ca = Arc::new(load(&resolve_data_dir(data_dir)?)?);
+            let dir = resolve_data_dir(data_dir)?;
+            let ca = Arc::new(load(&dir)?);
+            let rules_path = start
+                .rules
+                .clone()
+                .unwrap_or_else(|| dir.join(proxyrr_rules::RULES_FILE));
+            let rules = Arc::new(Rules::load(&rules_path)?);
+            announce_rules(&rules.list(), &rules_path);
             let api = api.then(|| ApiConfig {
                 listen: api_listen,
                 token: std::env::var("PROXYRR_API_TOKEN")
@@ -224,6 +236,7 @@ fn run(cli: Cli) -> Result<(), String> {
                     bypass: start.bypass,
                 },
                 template,
+                rules,
                 api,
                 har: start.har,
                 android: start.android,
@@ -253,6 +266,30 @@ fn run(cli: Cli) -> Result<(), String> {
 
 fn resolve_data_dir(explicit: Option<PathBuf>) -> Result<PathBuf, String> {
     explicit.map_or_else(default_data_dir, Ok)
+}
+
+/// Resume las reglas activas al arrancar y avisa lo que en la terminal no aplica.
+fn announce_rules(rules: &[Rule], path: &Path) {
+    let active: Vec<&Rule> = rules.iter().filter(|r| r.enabled).collect();
+    if active.is_empty() {
+        return;
+    }
+    let names: Vec<&str> = active.iter().map(|r| r.name.as_str()).collect();
+    eprintln!(
+        "{} reglas activas de {}: {}",
+        active.len(),
+        path.display(),
+        names.join(", ")
+    );
+    if active
+        .iter()
+        .any(|r| matches!(r.action, Action::Breakpoint { .. }))
+    {
+        eprintln!(
+            "aviso: los breakpoints no pausan en la terminal (no hay dónde editar); usá la app de \
+             escritorio. Los flujos siguen sin cambios."
+        );
+    }
 }
 
 /// Logs del motor por stderr (TD-006). Solo los de ProxyRR; las dependencias, desde `warn`.
@@ -347,6 +384,7 @@ struct StartPlan {
     ca: Arc<CertificateAuthority>,
     settings: ProxySettings,
     template: ProxyConfig,
+    rules: Arc<Rules>,
     api: Option<ApiConfig>,
     har: Option<PathBuf>,
     android: Option<String>,
@@ -358,6 +396,7 @@ fn run_start(plan: StartPlan) -> Result<(), String> {
         ca,
         settings,
         template,
+        rules,
         api,
         har,
         android: android_serial,
@@ -391,6 +430,7 @@ fn run_start(plan: StartPlan) -> Result<(), String> {
                 local_site_ca: Some(Arc::clone(&ca)),
                 ..template
             },
+            rules: Some(rules),
             ..EngineOptions::default()
         }));
         // Suscribir antes de prender: no se pierde ningún flujo.
@@ -514,10 +554,17 @@ fn format_event(event: &FlowEvent) -> Option<String> {
             flow.status,
             flow.url.as_str(),
             flow.elapsed,
-            flow.error
-                .clone()
-                .or_else(|| flow.content_length.map(format_size))
-                .unwrap_or_default(),
+            {
+                let mut extra = flow
+                    .error
+                    .clone()
+                    .or_else(|| flow.content_length.map(format_size))
+                    .unwrap_or_default();
+                if !flow.rules.is_empty() {
+                    extra = format!("{extra}  [reglas: {}]", flow.rules.join(", "));
+                }
+                extra.trim_start().to_owned()
+            },
         ),
         FlowEvent::Tunnel(flow) if flow.intercepted && flow.error.is_none() => return None,
         // Los bodies no se muestran en la terminal; los consume el store / la API.
@@ -667,6 +714,7 @@ mod tests {
             request_headers: Vec::new(),
             status: 200,
             response_headers: Vec::new(),
+            rules: Vec::new(),
             error: None,
             elapsed: Duration::from_millis(42),
             content_length: Some(2048),

@@ -18,10 +18,12 @@ tauri-build.workspace = true
 
 [dependencies]
 base64.workspace = true
+bytes.workspace = true
 proxyrr-api.workspace = true
 proxyrr-cert.workspace = true
 proxyrr-core.workspace = true
 proxyrr-devices.workspace = true
+proxyrr-rules.workspace = true
 proxyrr-store.workspace = true
 serde.workspace = true
 serde_json.workspace = true

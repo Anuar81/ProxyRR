@@ -204,6 +204,7 @@ mod tests {
                 request_headers: vec![("content-type".into(), "text/plain".into())],
                 status: 201,
                 response_headers,
+                rules: Vec::new(),
                 error: None,
                 elapsed: Duration::from_millis(40),
                 content_length: None,

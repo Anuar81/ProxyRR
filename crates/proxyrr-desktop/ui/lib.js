@@ -172,3 +172,86 @@ export class FlowList {
     return this.ids.length ? this.ids[this.ids.length - 1] : undefined;
   }
 }
+
+
+// ---------- Reglas (spec 0011) ----------
+
+/** Nombre visible de cada tipo de regla. */
+export const ACTION_LABELS = {
+  map_local: "Map Local",
+  map_remote: "Map Remote",
+  block: "Block",
+  no_cache: "No Caching",
+  breakpoint: "Breakpoint",
+};
+
+/** Headers `[[nombre, valor]]` → una línea `Nombre: valor` por header. */
+export function headersToText(headers) {
+  return (headers || []).map(([name, value]) => `${name}: ${value}`).join("\n");
+}
+
+/** Inversa de `headersToText`. Ignora líneas vacías y sin `:`; el valor puede tener `:`. */
+export function parseHeaders(text) {
+  const out = [];
+  for (const line of (text || "").split(/\r?\n/)) {
+    const i = line.indexOf(":");
+    if (i <= 0) continue;
+    const name = line.slice(0, i).trim();
+    if (name) out.push([name, line.slice(i + 1).trim()]);
+  }
+  return out;
+}
+
+/** Acción por defecto de cada tipo, para el editor. */
+export function defaultAction(type) {
+  switch (type) {
+    case "map_local":
+      return { type, status: 200, headers: [["content-type", "application/json"]], body: "{}", file: null };
+    case "map_remote":
+      return { type, scheme: "http", host: "localhost", port: 3000, path: null, query: null, preserve_host: false };
+    case "block":
+      return { type, status: 403 };
+    case "breakpoint":
+      return { type, request: true, response: true };
+    default:
+      return { type: "no_cache" };
+  }
+}
+
+/** Regla vacía (id 0: la asigna el backend al guardar). */
+export function emptyRule(type = "map_local") {
+  return { id: 0, name: "", enabled: true, method: null, url: "", regex: false, action: defaultAction(type) };
+}
+
+/** Qué hace una regla, en una línea. */
+export function ruleSummary(rule) {
+  const a = rule.action;
+  switch (a.type) {
+    case "map_local":
+      return a.file ? `responde ${a.status} con ${a.file}` : `responde ${a.status} (${a.body.length} caracteres)`;
+    case "map_remote": {
+      const parts = [a.scheme && `${a.scheme}://`, a.host, a.port && `:${a.port}`, a.path, a.query && `?${a.query}`].filter(Boolean);
+      return `→ ${parts.join("") || "(sin cambios)"}${a.preserve_host ? " · Host original" : ""}`;
+    }
+    case "block":
+      return `responde ${a.status}`;
+    case "breakpoint":
+      return [a.request && "request", a.response && "response"].filter(Boolean).join(" + ") || "(nada)";
+    default:
+      return "sin caché";
+  }
+}
+
+/** Campo de texto opcional: vacío → `null`. */
+export function optional(text) {
+  const t = (text || "").trim();
+  return t ? t : null;
+}
+
+/** Número entero en rango, o `null` si está vacío o es inválido. */
+export function optionalInt(text, min, max) {
+  const t = (text || "").trim();
+  if (!/^\d+$/.test(t)) return null;
+  const n = Number(t);
+  return n >= min && n <= max ? n : null;
+}

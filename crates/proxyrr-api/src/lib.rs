@@ -8,6 +8,7 @@
 //! Rutas (todas bajo `/api/v1`, con `Authorization: Bearer <token>`):
 //! `GET /status`, `POST /proxy/start`, `POST /proxy/stop`, `GET|DELETE /flows` (`?after=<id>`),
 //! `GET /flows/{id}`, `GET /flows/{id}/request/body`, `GET /flows/{id}/response/body`,
+//! `POST /flows/{id}/replay`, `GET|PUT /rules`, `GET /har`,
 //! `GET /events` (WebSocket; acepta `?token=`).
 
 mod dto;

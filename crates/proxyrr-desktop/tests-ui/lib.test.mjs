@@ -3,16 +3,23 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  ACTION_LABELS,
   FlowList,
   base64ToBytes,
+  emptyRule,
   formatMs,
   formatSize,
+  headersToText,
   hexDump,
   hostOf,
   matchesFilter,
+  optional,
+  optionalInt,
+  parseHeaders,
   parseList,
   portOf,
   prettyJson,
+  ruleSummary,
   statusClass,
 } from "../ui/lib.js";
 
@@ -89,4 +96,31 @@ test("lista ordenada con actualización en el lugar", () => {
   list.clear();
   assert.equal(list.size, 0);
   assert.equal(list.lastId(), undefined);
+});
+
+
+test("headers en texto, ida y vuelta", () => {
+  const headers = [["content-type", "application/json"], ["x-url", "https://a.b/c"]];
+  const text = headersToText(headers);
+  assert.equal(text, "content-type: application/json\nx-url: https://a.b/c");
+  assert.deepEqual(parseHeaders(text), headers);
+  assert.deepEqual(parseHeaders("\n sin-dos-puntos\n: sin nombre\nA:  1 \r\n"), [["A", "1"]]);
+  assert.deepEqual(headersToText(null), "");
+});
+
+test("reglas: vacía, resumen y campos opcionales", () => {
+  const rule = emptyRule("map_local");
+  assert.equal(rule.id, 0);
+  assert.equal(rule.action.status, 200);
+  assert.equal(ruleSummary(rule), "responde 200 (2 caracteres)");
+  assert.equal(ruleSummary(emptyRule("map_remote")), "→ http://localhost:3000");
+  assert.equal(ruleSummary(emptyRule("block")), "responde 403");
+  assert.equal(ruleSummary(emptyRule("breakpoint")), "request + response");
+  assert.equal(ruleSummary(emptyRule("no_cache")), "sin caché");
+  assert.equal(ACTION_LABELS.map_remote, "Map Remote");
+  assert.equal(optional("  "), null);
+  assert.equal(optional(" a "), "a");
+  assert.equal(optionalInt("8080", 1, 65535), 8080);
+  assert.equal(optionalInt("70000", 1, 65535), null);
+  assert.equal(optionalInt("12a", 1, 65535), null);
 });

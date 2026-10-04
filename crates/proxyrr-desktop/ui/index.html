@@ -21,6 +21,9 @@
     <input id="filter" type="search" placeholder="Filtrar (texto, status:4xx, method:post, -excluir)" aria-label="Filtrar flujos">
     <button id="clear" type="button" title="Borrar todos los flujos">Limpiar</button>
     <button id="har" type="button" title="Guardar todos los flujos HTTP como HAR en Descargas">Exportar HAR</button>
+    <button id="paused" class="paused" type="button" hidden title="Flujos detenidos en un breakpoint">⏸ 0 en pausa</button>
+    <button id="rules" type="button" title="Map Local, Map Remote, Block, No Caching y Breakpoint">Reglas…</button>
+    <button id="compose" type="button" title="Armar y mandar un request">Compose…</button>
     <button id="cert" type="button">Certificado…</button>
   </header>
 
@@ -70,5 +73,32 @@
       <button id="cert-close" class="dlg-close" type="button" aria-label="Cerrar">✕</button>
     </div>
   </dialog>
+
+  <dialog id="rules-dialog" aria-labelledby="rules-title">
+    <div class="dlg one">
+      <div id="rules-body" class="dlg-body"></div>
+      <button id="rules-close" class="dlg-close" type="button" aria-label="Cerrar">✕</button>
+    </div>
+  </dialog>
+
+  <dialog id="bp-dialog" aria-labelledby="bp-title">
+    <div class="dlg">
+      <nav class="dlg-nav" aria-label="Flujos en pausa">
+        <h2 id="bp-title">En pausa</h2>
+        <div id="bp-queue" class="bp-queue"></div>
+      </nav>
+      <div id="bp-body" class="dlg-body"></div>
+      <button id="bp-close" class="dlg-close" type="button" aria-label="Cerrar (siguen en pausa)">✕</button>
+    </div>
+  </dialog>
+
+  <dialog id="compose-dialog" aria-labelledby="compose-title">
+    <div class="dlg one">
+      <div id="compose-body" class="dlg-body"></div>
+      <button id="compose-close" class="dlg-close" type="button" aria-label="Cerrar">✕</button>
+    </div>
+  </dialog>
+
+  <div id="menu" class="menu" role="menu" hidden></div>
 </body>
 </html>

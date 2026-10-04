@@ -65,6 +65,8 @@ pub struct FlowSummaryDto {
     pub response_size: Option<u64>,
     pub in_progress: bool,
     pub tunnel: bool,
+    /// Reglas que modificaron el flujo.
+    pub rules: Vec<String>,
 }
 
 impl From<FlowSummary> for FlowSummaryDto {
@@ -79,6 +81,7 @@ impl From<FlowSummary> for FlowSummaryDto {
             response_size: s.response_size,
             in_progress: s.in_progress,
             tunnel: s.tunnel,
+            rules: s.rules,
         }
     }
 }
@@ -123,6 +126,7 @@ pub enum FlowDto {
         elapsed_ms: u64,
         duration_ms: Option<u64>,
         in_progress: bool,
+        rules: Vec<String>,
         request: MessageDto,
         response: MessageDto,
     },
@@ -151,6 +155,7 @@ impl From<StoredFlow> for FlowDto {
                     elapsed_ms: millis(head.elapsed),
                     duration_ms: bodies.as_ref().map(|b| millis(b.duration)),
                     in_progress: bodies.is_none(),
+                    rules: head.rules,
                     request: MessageDto {
                         headers: head.request_headers,
                         body: bodies.as_ref().map(|b| (&b.request).into()),

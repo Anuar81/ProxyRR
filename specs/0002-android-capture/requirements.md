@@ -1,6 +1,6 @@
 # 0002 — Android capture
 
-- Estado: borrador (requisitos capturados temprano; se diseña al llegar a F4)
+- Estado: implementada en la 0010 (falta la prueba manual con un emulador "Google APIs")
 - Fase: F4
 - Depende de: ca-certificates, https-mitm, control-api
 

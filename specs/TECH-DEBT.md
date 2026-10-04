@@ -18,6 +18,8 @@ Cada entrada: id, origen, qué pasa, por qué importa, propuesta. Al pagarla: `P
 | TD-008 | 0005 | pagada en 0010 |
 | TD-009 | 0006 | abierta (necesita una Mac y un Linux reales) |
 | TD-010 | 0006 | pagada en 0010 |
+| TD-011 | 0011 | abierta |
+| TD-012 | 0011 | abierta |
 
 ## TD-001 — Timeout de conexión al origen de 10 s
 
@@ -126,3 +128,20 @@ Cada entrada: id, origen, qué pasa, por qué importa, propuesta. Al pagarla: `P
 - **TD-010:** con `local_site_ca`, un `CONNECT proxyrr.cert:443` se termina con una hoja de la CA aunque
   el MITM esté apagado; el resto del tráfico sigue en túnel. Tests `local_site_over_https_without_mitm`
   y `local_ca_never_decrypts_other_hosts`.
+
+
+## TD-011 — Breakpoints solo desde la app
+
+- **Origen:** 0011.
+- **Qué pasa:** los breakpoints pausan solo si la app de escritorio está abierta. Con `proxyrr start --api`
+  no hay forma de verlos ni resolverlos por la API, así que en el CLI no pausan (se avisa al arrancar).
+- **Propuesta:** `GET /api/v1/breakpoints`, `POST /api/v1/breakpoints/{key}` y avisos `paused`/`resolved`
+  por el WebSocket. Mientras haya un cliente del WebSocket suscripto, pausan.
+
+## TD-012 — Copiar como cURL solo en sintaxis bash; Compose no edita bodies binarios
+
+- **Origen:** 0011.
+- **Qué pasa:** el comando usa comillas simples POSIX: anda en bash/zsh/Git Bash, no en `cmd` ni en
+  PowerShell 5. Compose y "Editar y repetir" muestran el body como texto: si el original es binario, se
+  avisa y se manda vacío salvo que el usuario lo complete.
+- **Propuesta:** variantes "cURL (PowerShell)" y "cURL (cmd)"; en Compose, opción "mantener body original".

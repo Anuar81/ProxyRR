@@ -70,7 +70,9 @@ impl Rules {
     pub fn load(path: &Path) -> Result<Self, String> {
         let rules = match std::fs::read(path) {
             Ok(bytes) => {
-                serde_json::from_slice::<RulesFile>(&bytes)
+                // El Bloc de notas y PowerShell 5 guardan UTF-8 con BOM: se acepta igual.
+                let json = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&bytes);
+                serde_json::from_slice::<RulesFile>(json)
                     .map_err(|e| {
                         format!("{} no es un archivo de reglas válido: {e}", path.display())
                     })?
@@ -551,5 +553,17 @@ mod tests {
         let path = dir.path().join(RULES_FILE);
         std::fs::write(&path, "no es json").unwrap();
         assert!(Rules::load(&path).is_err());
+    }
+
+    #[test]
+    fn rules_file_with_bom_loads() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(RULES_FILE);
+        std::fs::write(
+            &path,
+            b"\xEF\xBB\xBF{\"version\":1,\"rules\":[{\"name\":\"a\",\"url\":\"*\",\"action\":{\"type\":\"no_cache\"}}]}",
+        )
+        .unwrap();
+        assert_eq!(Rules::load(&path).unwrap().list().len(), 1);
     }
 }

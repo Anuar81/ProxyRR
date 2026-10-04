@@ -1,6 +1,6 @@
 # 0010 — Android + deuda técnica + HAR (rama de pruebas integrales)
 
-- Estado: en curso
+- Estado: terminada (PR #9)
 - Fase: F1/F4
 - Depende de: 0002 (requisitos), 0006, 0008, 0009
 - Rama: `spec/0010-android-and-debt`

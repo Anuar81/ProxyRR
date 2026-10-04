@@ -48,8 +48,8 @@ en una rama (pedido del usuario: un solo PR para F3).
    `flow_lists_applied_rules`.
 8. **Repeat / Compose**: reenviar un flujo, o un request editado o nuevo, pasa por el proxy (se captura y
    se le aplican las reglas) aunque sea HTTPS. Requiere el proxy prendido. Tests: `replay_*`.
-9. **Copy as cURL** genera un comando que reproduce el request (método, URL, headers y body, con comillas
-   seguras). Test JS: `curl.*`.
+9. **Copy as cURL** genera un comando bash que reproduce el request (método, URL, headers y body, con
+   comillas seguras). Test: `tools::tests::curl_reproduces_the_request`.
 10. En la app: diálogo **Reglas** (lista, activar, editar, borrar, crear), clic derecho sobre un flujo
     (Map Local, Map Remote, Breakpoint, Block, No Caching, Repetir, Editar y repetir, Copiar como cURL),
     editor de breakpoints en cola y diálogo **Compose**. Map Local creado desde un flujo arranca con su

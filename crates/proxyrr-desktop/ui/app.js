@@ -632,7 +632,11 @@ async function showRuleList() {
         el("button", { class: "small", type: "button", disabled: i === 0, "aria-label": "Subir", onclick: () => move(i, -1) }, "↑"),
         el("button", { class: "small", type: "button", disabled: i === rules.length - 1, "aria-label": "Bajar", onclick: () => move(i, 1) }, "↓"),
         el("button", { class: "small", type: "button", onclick: () => showRuleEditor(r, rules) }, "Editar"),
-        el("button", { class: "small", type: "button", onclick: () => save(rules.filter((x) => x.id !== r.id)) }, "Borrar")),
+        el("button", { class: "small", type: "button", onclick: (e) => {
+          // Dos clics: el primero pide confirmar (un clic de más no borra una regla).
+          if (e.target.dataset.armed) save(rules.filter((x) => x.id !== r.id));
+          else { e.target.dataset.armed = "1"; e.target.textContent = "¿Borrar?"; }
+        } }, "Borrar")),
     ));
   body.replaceChildren(
     el("h2", { id: "rules-title", text: "Reglas" }),
@@ -805,6 +809,8 @@ function onBreakpoint(message) {
     paused.list = paused.list.filter((p) => p.key !== message.key);
     if (paused.current === message.key) paused.current = paused.list[0]?.key ?? null;
     updatePausedBadge();
+    // Sin nada más en pausa, la ventana se cierra sola y vuelve la lista.
+    if (paused.list.length === 0 && $("bp-dialog").open) $("bp-dialog").close();
     renderBreakpoints();
   } else if (message.type === "lagged") {
     loadPaused().catch(() => {});

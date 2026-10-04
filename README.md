@@ -23,6 +23,6 @@ numeradas y quedan como histórico: una spec terminada no se reescribe, se super
 
 ## Licencia
 
-Tentativa: [PolyForm Small Business 1.0.0](https://polyformproject.org/licenses/small-business/1.0.0).
+[PolyForm Small Business 1.0.0](https://polyformproject.org/licenses/small-business/1.0.0): gratis para personas y empresas chicas (menos de 100 personas y de US$1M de facturación); las más grandes necesitan una licencia comercial aparte. Texto completo en `LICENSE`.
 Gratis para personas y organizaciones de menos de 100 personas y menos de US$1M de facturación;
 las más grandes necesitan una licencia comercial. Ver [`LICENSE`](LICENSE).

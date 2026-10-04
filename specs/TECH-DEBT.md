@@ -12,7 +12,7 @@ Cada entrada: id, origen, qué pasa, por qué importa, propuesta. Al pagarla: `P
 | TD-002 | 0004 | pagada en 0007 |
 | TD-003 | 0004 | pagada en 0010 |
 | TD-004 | 0004 | pagada en 0010 |
-| TD-005 | 0001 | abierta (depende de la licencia definitiva) |
+| TD-005 | 0001 | pagada en 0011 (PolyForm Small Business confirmada, texto completo en `LICENSE`) |
 | TD-006 | 0004 | pagada en 0010 |
 | TD-007 | 0005 | pagada en 0010 |
 | TD-008 | 0005 | pagada en 0010 |

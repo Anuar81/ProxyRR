@@ -5,6 +5,7 @@ use std::error::Error as StdError;
 use std::io;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
@@ -295,7 +296,26 @@ impl TunnelLog {
             elapsed: self.started.elapsed(),
         }));
     }
+
+    /// Re-emite un túnel descifrado ya abierto (mismo id: el store lo reemplaza) con un aviso,
+    /// conservando el tiempo de apertura original.
+    fn emit_at(&self, ctx: &Context, elapsed: Duration, warning: Option<String>) {
+        ctx.emit(FlowEvent::Tunnel(TunnelFlow {
+            id: self.id,
+            authority: self.authority.clone(),
+            status: StatusCode::OK.as_u16(),
+            intercepted: true,
+            error: warning,
+            elapsed,
+        }));
+    }
 }
+
+/// Aviso para un túnel descifrado que se cerró sin mandar ningún request.
+pub(crate) const NO_REQUESTS_HINT: &str = "el túnel se descifró pero el cliente lo cerró sin \
+    mandar ningún request: suele ser certificate pinning (OkHttp CertificatePinner, <pin-set>) o \
+    una conexión abierta por adelantado que no se usó. Si se repite en cada intento, desactivá el \
+    pinning en debug o excluí el host con --bypass";
 
 pub(crate) async fn handle(
     req: Request<Incoming>,
@@ -804,13 +824,19 @@ async fn intercept(req: Request<Incoming>, ctx: Arc<Context>, target: Target, lo
         Ok(Err(e)) => return handshake_failed(describe_client_tls_error(&e)),
         Err(_) => return handshake_failed("el cliente no completó el handshake TLS".to_owned()),
     };
-    log.emit(&ctx, StatusCode::OK, None, true);
+    let opened = log.started.elapsed();
+    log.emit_at(&ctx, opened, None);
 
     let base = target.base_url();
     let tracker = ctx.tracker().clone();
+    // Cuántos requests viajaron por el túnel: cero con handshake OK suele ser certificate pinning.
+    let requests = Arc::new(AtomicU64::new(0));
+    let counter = Arc::clone(&requests);
+    let inner_ctx = Arc::clone(&ctx);
     let service = service_fn(move |req| {
-        let ctx = Arc::clone(&ctx);
+        let ctx = Arc::clone(&inner_ctx);
         let base = base.clone();
+        counter.fetch_add(1, Ordering::Relaxed);
         async move { Ok::<_, Infallible>(decrypted(req, &ctx, &base).await) }
     });
     let conn = http1::Builder::new()
@@ -820,7 +846,12 @@ async fn intercept(req: Request<Incoming>, ctx: Arc<Context>, target: Target, lo
     tokio::pin!(conn);
     // Los errores de la conexión descifrada (cliente que corta) no afectan al resto.
     tokio::select! {
-        _ = conn.as_mut() => return,
+        _ = conn.as_mut() => {
+            if requests.load(Ordering::Relaxed) == 0 {
+                log.emit_at(&ctx, opened, Some(NO_REQUESTS_HINT.to_owned()));
+            }
+            return;
+        }
         () = tracker.reached(Phase::Draining) => conn.as_mut().graceful_shutdown(),
     }
     tokio::select! {

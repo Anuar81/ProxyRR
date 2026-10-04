@@ -18,7 +18,7 @@ Cada entrada: id, origen, qué pasa, por qué importa, propuesta. Al pagarla: `P
 | TD-008 | 0005 | pagada en 0010 |
 | TD-009 | 0006 | abierta (necesita una Mac y un Linux reales) |
 | TD-010 | 0006 | pagada en 0010 |
-| TD-011 | 0011 | abierta |
+| TD-011 | 0011 | pagada en 0011 (`GET /api/v1/breakpoints`, `POST /api/v1/breakpoints/{key}`, avisos `paused`/`resolved` por el WebSocket) |
 | TD-012 | 0011 | parcial: cURL para PowerShell hecho en 0011; falta "mantener body original" binario en Compose |
 
 ## TD-001 — Timeout de conexión al origen de 10 s

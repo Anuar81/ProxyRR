@@ -286,8 +286,9 @@ fn announce_rules(rules: &[Rule], path: &Path) {
         .any(|r| matches!(r.action, Action::Breakpoint { .. }))
     {
         eprintln!(
-            "aviso: los breakpoints no pausan en la terminal (no hay dónde editar); usá la app de \
-             escritorio. Los flujos siguen sin cambios."
+            "aviso: los breakpoints solo pausan con la app de escritorio, o con `--api` mientras \
+             haya un cliente en /api/v1/events (se resuelven con POST /api/v1/breakpoints/{{key}}). \
+             Si no, los flujos siguen sin cambios."
         );
     }
 }

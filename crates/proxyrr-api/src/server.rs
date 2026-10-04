@@ -24,6 +24,7 @@ use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
+use crate::breakpoint::{self, PausedDto, ResolveDto};
 use crate::dto::{FlowDto, FlowSummaryDto, StatusDto, WsMessage};
 use crate::engine::{Engine, EngineError, ProxySettings};
 
@@ -196,6 +197,8 @@ fn router(state: AppState) -> Router {
         .route("/api/v1/flows/{id}/{side}/body", get(get_body))
         .route("/api/v1/rules", get(get_rules).put(put_rules))
         .route("/api/v1/har", get(har))
+        .route("/api/v1/breakpoints", get(list_breakpoints))
+        .route("/api/v1/breakpoints/{key}", post(resolve_breakpoint))
         .route(EVENTS_PATH, get(events))
         .fallback(|| async { Failure::new(StatusCode::NOT_FOUND, "not_found", "ruta desconocida") })
         .method_not_allowed_fallback(|| async {
@@ -439,6 +442,40 @@ async fn get_flow(
     Ok(Json(flow.into()))
 }
 
+/// Flujos en pausa (TD-011). Solo pausan mientras haya un cliente en `/api/v1/events`.
+async fn list_breakpoints(State(state): State<AppState>) -> Json<Vec<PausedDto>> {
+    Json(
+        state
+            .engine
+            .rules()
+            .breakpoints()
+            .pending()
+            .iter()
+            .map(PausedDto::from)
+            .collect(),
+    )
+}
+
+/// Decide sobre un flujo en pausa: `{"action": "continue" | "abort" | "execute", "edited": {...}}`.
+async fn resolve_breakpoint(
+    State(state): State<AppState>,
+    Path(key): Path<String>,
+    body: Bytes,
+) -> Result<StatusCode, Failure> {
+    let key = parse_id(&key)?;
+    let decision: ResolveDto = serde_json::from_slice(&body)
+        .map_err(|e| Failure::new(StatusCode::BAD_REQUEST, "bad_request", e.to_string()))?;
+    breakpoint::resolve(state.engine.rules().breakpoints(), key, decision)
+        .map(|()| StatusCode::NO_CONTENT)
+        .map_err(|e| {
+            if e == breakpoint::NOT_PAUSED {
+                Failure::new(StatusCode::NOT_FOUND, "not_paused", e)
+            } else {
+                Failure::new(StatusCode::BAD_REQUEST, "invalid_decision", e)
+            }
+        })
+}
+
 /// Bytes tal como viajaron (CA 7). `nosniff` + `sandbox`: un HTML capturado no corre en este origen.
 async fn get_body(
     State(state): State<AppState>,
@@ -523,6 +560,8 @@ async fn events(
 async fn stream_events(mut socket: WebSocket, state: AppState) {
     // Suscribir antes de armar el `hello`: nada queda entre los dos.
     let mut notices = state.engine.subscribe();
+    // Mientras este cliente esté conectado, los breakpoints pausan (hay quien los resuelva).
+    let mut paused = state.engine.rules().breakpoints().subscribe();
     let mut stop = state.stop;
     let hello = WsMessage::Hello {
         status: state.engine.status().await.into(),
@@ -540,6 +579,11 @@ async fn stream_events(mut socket: WebSocket, state: AppState) {
             },
             notice = notices.recv() => match notice {
                 Ok(notice) => WsMessage::from(notice),
+                Err(RecvError::Lagged(missed)) => WsMessage::Lagged { missed },
+                Err(RecvError::Closed) => break,
+            },
+            event = paused.recv() => match event {
+                Ok(event) => WsMessage::from(event),
                 Err(RecvError::Lagged(missed)) => WsMessage::Lagged { missed },
                 Err(RecvError::Closed) => break,
             },

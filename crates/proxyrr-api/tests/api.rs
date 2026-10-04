@@ -710,3 +710,91 @@ async fn rules_and_replay() {
             .contains("apagado")
     );
 }
+
+#[tokio::test]
+async fn breakpoints_pause_while_a_websocket_listens_and_resolve_by_api() {
+    let (_engine, api) = start(Engine::new(EngineOptions::default())).await;
+    let origin = start_origin().await;
+    let saved = call(
+        &api,
+        "PUT",
+        "/api/v1/rules",
+        r#"[{"name":"bp","url":"*/pausa*","action":{"type":"breakpoint","request":true,"response":false}}]"#,
+    )
+    .await;
+    assert_eq!(
+        saved.status,
+        200,
+        "{}",
+        String::from_utf8_lossy(&saved.body)
+    );
+    let started = call(
+        &api,
+        "POST",
+        "/api/v1/proxy/start",
+        r#"{"listen":"127.0.0.1:0"}"#,
+    )
+    .await
+    .json();
+    let proxy = proxy_addr(&started);
+    let url = format!(
+        "ws://{}/api/v1/events?token={}",
+        api.local_addr(),
+        api.token()
+    );
+    let (mut ws, _) = tokio_tungstenite::connect_async(url).await.unwrap();
+    assert_eq!(next_json(&mut ws).await["type"], "hello");
+
+    let target = format!("http://{origin}/pausa");
+    let host = origin.to_string();
+    let client =
+        tokio::spawn(async move { raw(proxy, &host, "GET", &target, "", "").await.status });
+    let paused = next_of(&mut ws, "paused").await;
+    assert_eq!(paused["paused"]["stage"], "request");
+    assert_eq!(paused["paused"]["url"], format!("http://{origin}/pausa"));
+    let key = paused["paused"]["key"].as_u64().unwrap();
+
+    let listed = call(&api, "GET", "/api/v1/breakpoints", "").await.json();
+    assert_eq!(listed.as_array().unwrap().len(), 1);
+    let bad = call(
+        &api,
+        "POST",
+        &format!("/api/v1/breakpoints/{key}"),
+        r#"{"action":"nada"}"#,
+    )
+    .await;
+    assert_eq!(bad.status, 400);
+    let ok = call(
+        &api,
+        "POST",
+        &format!("/api/v1/breakpoints/{key}"),
+        r#"{"action":"abort"}"#,
+    )
+    .await;
+    assert_eq!(ok.status, 204);
+    assert_eq!(next_of(&mut ws, "resolved").await["key"], key);
+    assert_eq!(timeout(LIMIT, client).await.unwrap().unwrap(), 503);
+    let gone = call(
+        &api,
+        "POST",
+        &format!("/api/v1/breakpoints/{key}"),
+        r#"{"action":"continue"}"#,
+    )
+    .await;
+    assert_eq!(gone.status, 404);
+    assert_eq!(gone.error_code(), "not_paused");
+
+    // Sin nadie escuchando el WebSocket, el breakpoint no pausa.
+    drop(ws);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let free = raw(
+        proxy,
+        &origin.to_string(),
+        "GET",
+        &format!("http://{origin}/pausa"),
+        "",
+        "",
+    )
+    .await;
+    assert_eq!(free.status, 200);
+}

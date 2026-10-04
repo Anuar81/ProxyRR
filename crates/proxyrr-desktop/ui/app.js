@@ -972,6 +972,9 @@ function bind() {
     if (!$("menu").hidden && !$("menu").contains(e.target)) closeMenu();
   });
   window.addEventListener("blur", closeMenu);
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !$("menu").hidden) closeMenu();
+  });
   for (const b of document.querySelectorAll(".dlg-nav button")) b.addEventListener("click", () => showCert(b.dataset.target));
   for (const tab of document.querySelectorAll(".tabs button")) {
     tab.addEventListener("click", () => {

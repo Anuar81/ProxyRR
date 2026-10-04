@@ -123,6 +123,8 @@ button.paused { background: var(--warn); border-color: var(--warn); color: #fff;
 .bp-queue button { text-align: left; font-family: var(--mono); font-size: 11px; word-break: break-all; }
 .bp-queue button[aria-current="true"] { border-color: var(--accent); background: var(--sel); }
 .menu { position: fixed; z-index: 10; min-width: 200px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 4px; box-shadow: 0 6px 24px #0004; display: flex; flex-direction: column; }
+/* Un `display` de clase no puede ganarle al atributo `hidden` (bug del menú contextual). */
+[hidden] { display: none !important; }
 .menu button { border: none; background: none; text-align: left; border-radius: 4px; padding: 4px 10px; }
 .menu button:hover, .menu button:focus-visible { background: var(--sel); }
 .menu hr { border: none; border-top: 1px solid var(--line); margin: 4px 0; width: 100%; }

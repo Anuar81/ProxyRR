@@ -16,8 +16,10 @@ use proxyrr_api::{FlowDto, FlowSummaryDto, ProxyStatusDto, StatusDto, WsMessage}
 use tauri::{Emitter, Manager, State};
 use tokio::sync::broadcast::error::RecvError;
 
+mod android;
 mod backend;
 
+use android::{ConfiguredDto, DevicesDto};
 use backend::{Backend, BodyView, CaOverview, GuideDto, Side, StartRequest};
 
 /// Evento con los avisos del engine (mismo formato que el WebSocket de la API).
@@ -96,6 +98,54 @@ async fn install_ios_simulator(state: AppState<'_>) -> Result<(), String> {
     blocking(&state, Backend::install_ios_simulator).await
 }
 
+#[tauri::command]
+async fn export_har(state: AppState<'_>) -> Result<String, String> {
+    blocking(&state, Backend::export_har).await
+}
+
+#[tauri::command]
+async fn android_devices(state: AppState<'_>) -> Result<DevicesDto, String> {
+    blocking(&state, |b| Ok(b.android_devices())).await
+}
+
+#[tauri::command]
+async fn android_set_adb(state: AppState<'_>, path: String) -> Result<DevicesDto, String> {
+    blocking(&state, move |b| b.set_adb_path(&path)).await
+}
+
+#[tauri::command]
+async fn android_configure(
+    state: AppState<'_>,
+    serial: String,
+    port: u16,
+) -> Result<ConfiguredDto, String> {
+    blocking(&state, move |b| b.android_configure(&serial, port)).await
+}
+
+#[tauri::command]
+async fn android_revert(state: AppState<'_>, serial: String) -> Result<(), String> {
+    blocking(&state, move |b| b.android_revert(&serial)).await
+}
+
+/// Logs: `warn`+ de ProxyRR a la ventana y, en desarrollo, por stderr.
+fn init_logging(backend: &Backend) {
+    use tracing_subscriber::filter::{LevelFilter, Targets};
+    use tracing_subscriber::layer::SubscriberExt as _;
+    use tracing_subscriber::util::SubscriberInitExt as _;
+    let filter = Targets::new()
+        .with_default(LevelFilter::WARN)
+        .with_target("proxyrr", LevelFilter::WARN);
+    let _ = tracing_subscriber::registry()
+        .with(backend.log_layer())
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(std::io::stderr)
+                .with_target(false),
+        )
+        .with(filter)
+        .try_init();
+}
+
 fn main() {
     let data_dir = proxyrr_cert::default_data_dir()
         .expect("no se pudo determinar el directorio de datos de ProxyRR");
@@ -103,6 +153,8 @@ fn main() {
         Backend::new(&data_dir)
             .unwrap_or_else(|e| panic!("no se pudo cargar la CA de {}: {e}", data_dir.display())),
     );
+    init_logging(&backend);
+    let on_exit = Arc::clone(&backend);
     tauri::Builder::default()
         .manage(Arc::clone(&backend))
         .setup(move |app| {
@@ -154,7 +206,18 @@ fn main() {
             ca_uninstall,
             guide,
             install_ios_simulator,
+            export_har,
+            android_devices,
+            android_set_adb,
+            android_configure,
+            android_revert,
         ])
-        .run(tauri::generate_context!())
-        .expect("no se pudo abrir la ventana de ProxyRR");
+        .build(tauri::generate_context!())
+        .expect("no se pudo abrir la ventana de ProxyRR")
+        .run(move |_app, event| {
+            // Un dispositivo con el proxy puesto y sin ProxyRR se queda sin internet.
+            if let tauri::RunEvent::Exit = event {
+                on_exit.revert_android();
+            }
+        });
 }

@@ -10,14 +10,14 @@ Estado: ✅ tenemos · 🟡 parcial · ⬜ falta. Prioridad: P1 = siguiente fase
 
 | Función | Qué hace en Proxyman | ProxyRR | Prio |
 |---|---|---|---|
-| Breakpoint | Pausa request y/o response que matchea una regla. Se puede editar URL, método, headers, query, body y status, o en una pestaña "Raw" con el mensaje entero. Acciones: Execute, Cancel (sigue sin cambios), Abort (503). Se crea con clic derecho sobre un flujo, que completa la regla | ⬜ | P1 |
-| Map Local (archivo) | Responde con status, headers y body definidos por vos. Se crea desde un flujo y copia su response actual. Acepta un archivo (JSON, texto, binario, imagen) o un mensaje HTTP crudo | ⬜ | P1 |
+| Breakpoint | Pausa request y/o response que matchea una regla. Se puede editar URL, método, headers, query, body y status, o en una pestaña "Raw" con el mensaje entero. Acciones: Execute, Cancel (sigue sin cambios), Abort (503). Se crea con clic derecho sobre un flujo, que completa la regla | ✅ 0011 | P1 |
+| Map Local (archivo) | Responde con status, headers y body definidos por vos. Se crea desde un flujo y copia su response actual. Acepta un archivo (JSON, texto, binario, imagen) o un mensaje HTTP crudo | ✅ 0011 | P1 |
 | Map Local (directorio) | Sirve una carpeta local para un prefijo de URL | ⬜ | P2 |
-| Map Remote | Redirige a otro protocolo, host, puerto, path o query. Los campos vacíos no se cambian. Tiene "incluir subpaths" y "preservar Host". HTTP <-> HTTPS | ⬜ | P1 |
+| Map Remote | Redirige a otro protocolo, host, puerto, path o query. Los campos vacíos no se cambian. Tiene "incluir subpaths" y "preservar Host". HTTP <-> HTTPS | ✅ 0011 | P1 |
 | Templates de mensajes | Respuestas guardadas para reusar en breakpoints | ⬜ | P2 |
 | Scripting JS | `onRequest(context, url, request)` y `onResponse(...)`, con el body ya parseado según `Content-Type`, addons y estado compartido. Reemplaza a Map Local, Map Remote y Breakpoint con código | ⬜ | P2 (F5) |
-| Block List / Allow List | Bloquear hosts o capturar solo algunos | 🟡 `--bypass` | P1 |
-| No Caching | Quita los headers de caché para forzar requests frescos | ⬜ | P1 (barato) |
+| Block List / Allow List | Bloquear hosts o capturar solo algunos | 🟡 Block ✅ 0011, Allow ⬜ | P1 |
+| No Caching | Quita los headers de caché para forzar requests frescos | ✅ 0011 | P1 (barato) |
 | Network Conditions | Throttling y latencia por regla | ⬜ | P2 |
 | DNS Spoofing | Resolver un host a otra IP | ⬜ | P3 |
 
@@ -25,9 +25,9 @@ Estado: ✅ tenemos · 🟡 parcial · ⬜ falta. Prioridad: P1 = siguiente fase
 
 | Función | ProxyRR | Prio |
 |---|---|---|
-| Repeat (reenviar tal cual) | ⬜ | P1 |
-| Edit & Repeat / Compose (editar y enviar, o crear un request de cero) | ⬜ | P1 |
-| Copy as cURL / código (Code Generator) | ⬜ | P1 (barato) |
+| Repeat (reenviar tal cual) | ✅ 0011 | P1 |
+| Edit & Repeat / Compose (editar y enviar, o crear un request de cero) | ✅ 0011 | P1 |
+| Copy as cURL / código (Code Generator) | ✅ 0011 | P1 (barato) |
 
 ## Ver y organizar
 
@@ -35,7 +35,7 @@ Estado: ✅ tenemos · 🟡 parcial · ⬜ falta. Prioridad: P1 = siguiente fase
 |---|---|---|
 | Lista en vivo, inspector, JSON formateado, decodificación gzip/br | ✅ | -- |
 | Filtro por texto, status y método | ✅ | -- |
-| Regex y wildcard en filtros y reglas | ⬜ (usar el mismo matcher que las reglas) | P1 |
+| Regex y wildcard en filtros y reglas | 🟡 en reglas ✅ 0011, en el filtro ⬜ | P1 |
 | Filtros múltiples y custom | ⬜ | P2 |
 | Resaltar con color y comentarios | ⬜ | P2 |
 | Columnas de headers custom | ⬜ | P3 |

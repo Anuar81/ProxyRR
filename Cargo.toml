@@ -30,6 +30,8 @@ md-5 = "=0.11.0"
 # Renderers de texto (QR en la terminal) y SVG (QR en la app); sin `image`.
 qrcode = { version = "=0.14.1", default-features = false, features = ["svg"] }
 rcgen = { version = "=0.14.10", features = ["x509-parser"] }
+# Patrones de las reglas (spec 0011). Ya venía en el lockfile por Tauri.
+regex = "=1.13.1"
 ring = "=0.17.14"
 rustls = { version = "=0.23.45", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-native-certs = "=0.8.4"
@@ -55,6 +57,7 @@ proxyrr-api = { path = "crates/proxyrr-api" }
 proxyrr-cert = { path = "crates/proxyrr-cert" }
 proxyrr-core = { path = "crates/proxyrr-core" }
 proxyrr-devices = { path = "crates/proxyrr-devices" }
+proxyrr-rules = { path = "crates/proxyrr-rules" }
 proxyrr-store = { path = "crates/proxyrr-store" }
 
 [workspace.lints.rust]

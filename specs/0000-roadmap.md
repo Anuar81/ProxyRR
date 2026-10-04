@@ -27,7 +27,8 @@ Referencia funcional: el set de features de Proxyman (implementación propia, si
 | 0007 | [flow-store](0007-flow-store/requirements.md) | F1 | terminada (PR #5) |
 | 0008 | [control-api](0008-control-api/requirements.md) | F1 | terminada (PR #6) |
 | 0009 | [desktop-mvp](0009-desktop-mvp/requirements.md) | F2 | terminada (PR #8) |
-| 0010 | [android-and-debt](0010-android-and-debt/requirements.md) | F1/F4 | en curso: 0002 + deuda + HAR en una rama |
+| 0010 | [android-and-debt](0010-android-and-debt/requirements.md) | F1/F4 | terminada (PR #9) |
+| 0011 | [debug-tools](0011-debug-tools/requirements.md) | F3 | en curso: reglas, breakpoints, Repeat/Compose, cURL |
 
 Orden acordado para llegar rápido a algo usable (la app de escritorio):
 `flow-store` → `control-api` → **0006 certificate-setup** (CLI `ca install`, página `proxyrr.cert`, guías)

@@ -18,12 +18,17 @@ use tokio::sync::broadcast::error::RecvError;
 
 mod android;
 mod backend;
+mod tools;
 
 use android::{ConfiguredDto, DevicesDto};
 use backend::{Backend, BodyView, CaOverview, GuideDto, Side, StartRequest};
+use proxyrr_rules::{BreakpointEvent, Rule};
+use tools::{ComposeDto, DraftKind, EditedDto, PausedDto};
 
 /// Evento con los avisos del engine (mismo formato que el WebSocket de la API).
 const NOTICE_EVENT: &str = "proxyrr://notice";
+/// Evento con los breakpoints.
+const BREAKPOINT_EVENT: &str = "proxyrr://breakpoint";
 
 type AppState<'a> = State<'a, Arc<Backend>>;
 
@@ -127,6 +132,70 @@ async fn android_revert(state: AppState<'_>, serial: String) -> Result<(), Strin
     blocking(&state, move |b| b.android_revert(&serial)).await
 }
 
+#[tauri::command]
+fn rules_list(state: AppState<'_>) -> Vec<Rule> {
+    state.rules()
+}
+
+#[tauri::command]
+fn rules_save(state: AppState<'_>, rules: Vec<Rule>) -> Result<Vec<Rule>, String> {
+    state.save_rules(rules)
+}
+
+#[tauri::command]
+fn rule_draft(state: AppState<'_>, id: u64, kind: DraftKind) -> Result<Rule, String> {
+    state.draft_rule(id, kind)
+}
+
+#[tauri::command]
+fn breakpoints_pending(state: AppState<'_>) -> Vec<PausedDto> {
+    state.paused()
+}
+
+#[tauri::command]
+fn breakpoint_resolve(
+    state: AppState<'_>,
+    key: u64,
+    action: String,
+    edited: Option<EditedDto>,
+) -> Result<(), String> {
+    state.resolve_breakpoint(key, &action, edited)
+}
+
+#[tauri::command]
+async fn replay_flow(state: AppState<'_>, id: u64) -> Result<u64, String> {
+    state.replay_flow(id).await
+}
+
+#[tauri::command]
+fn compose_from(state: AppState<'_>, id: u64) -> Result<ComposeDto, String> {
+    state.compose_from(id)
+}
+
+#[tauri::command]
+async fn compose_send(state: AppState<'_>, request: ComposeDto) -> Result<u64, String> {
+    state.compose_send(request).await
+}
+
+#[tauri::command]
+fn copy_curl(state: AppState<'_>, id: u64, shell: Option<String>) -> Result<String, String> {
+    state.curl(id, shell.as_deref().unwrap_or("posix"))
+}
+
+/// Aviso de breakpoints para la ventana.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum BreakpointMessage {
+    Paused {
+        flow: PausedDto,
+    },
+    Resolved {
+        key: u64,
+    },
+    /// La ventana se atrasó: tiene que pedir la cola entera.
+    Lagged,
+}
+
 /// Logs: `warn`+ de ProxyRR a la ventana y, en desarrollo, por stderr.
 fn init_logging(backend: &Backend) {
     use tracing_subscriber::filter::{LevelFilter, Targets};
@@ -171,6 +240,23 @@ fn main() {
                     let _ = handle.emit(NOTICE_EVENT, message);
                 }
             });
+            let handle = app.handle().clone();
+            let mut breakpoints = backend.subscribe_breakpoints();
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    let message = match breakpoints.recv().await {
+                        Ok(BreakpointEvent::Paused(flow)) => BreakpointMessage::Paused {
+                            flow: PausedDto::from(&flow),
+                        },
+                        Ok(BreakpointEvent::Resolved { key }) => {
+                            BreakpointMessage::Resolved { key }
+                        }
+                        Err(RecvError::Lagged(_)) => BreakpointMessage::Lagged,
+                        Err(RecvError::Closed) => break,
+                    };
+                    let _ = handle.emit(BREAKPOINT_EVENT, message);
+                }
+            });
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_title(&format!("ProxyRR {}", env!("CARGO_PKG_VERSION")));
             }
@@ -211,6 +297,15 @@ fn main() {
             android_set_adb,
             android_configure,
             android_revert,
+            rules_list,
+            rules_save,
+            rule_draft,
+            breakpoints_pending,
+            breakpoint_resolve,
+            replay_flow,
+            compose_from,
+            compose_send,
+            copy_curl,
         ])
         .build(tauri::generate_context!())
         .expect("no se pudo abrir la ventana de ProxyRR")

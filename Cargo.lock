@@ -2799,6 +2799,7 @@ dependencies = [
  "hex",
  "proxyrr-cert",
  "proxyrr-core",
+ "proxyrr-rules",
  "proxyrr-store",
  "ring",
  "serde",
@@ -2838,6 +2839,7 @@ dependencies = [
  "proxyrr-cert",
  "proxyrr-core",
  "proxyrr-devices",
+ "proxyrr-rules",
  "serde_json",
  "tempfile",
  "tokio",
@@ -2870,11 +2872,13 @@ name = "proxyrr-desktop"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "bytes",
  "flate2",
  "proxyrr-api",
  "proxyrr-cert",
  "proxyrr-core",
  "proxyrr-devices",
+ "proxyrr-rules",
  "proxyrr-store",
  "serde",
  "serde_json",
@@ -2902,6 +2906,19 @@ dependencies = [
 [[package]]
 name = "proxyrr-rules"
 version = "0.1.0"
+dependencies = [
+ "bytes",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "proxyrr-core",
+ "regex",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+]
 
 [[package]]
 name = "proxyrr-store"

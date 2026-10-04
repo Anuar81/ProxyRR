@@ -16,6 +16,7 @@ bytes.workspace = true
 hex.workspace = true
 proxyrr-cert.workspace = true
 proxyrr-core.workspace = true
+proxyrr-rules.workspace = true
 proxyrr-store.workspace = true
 ring.workspace = true
 serde.workspace = true

@@ -55,6 +55,10 @@ impl From<ProxyStatus> for ProxyStatusDto {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "espejo JSON de FlowSummary: cada bool es una marca independiente de la lista"
+)]
 pub struct FlowSummaryDto {
     pub id: u64,
     pub method: String,
@@ -65,6 +69,9 @@ pub struct FlowSummaryDto {
     pub response_size: Option<u64>,
     pub in_progress: bool,
     pub tunnel: bool,
+    pub intercepted: bool,
+    /// Reglas que modificaron el flujo.
+    pub rules: Vec<String>,
 }
 
 impl From<FlowSummary> for FlowSummaryDto {
@@ -79,6 +86,8 @@ impl From<FlowSummary> for FlowSummaryDto {
             response_size: s.response_size,
             in_progress: s.in_progress,
             tunnel: s.tunnel,
+            intercepted: s.intercepted,
+            rules: s.rules,
         }
     }
 }
@@ -123,6 +132,7 @@ pub enum FlowDto {
         elapsed_ms: u64,
         duration_ms: Option<u64>,
         in_progress: bool,
+        rules: Vec<String>,
         request: MessageDto,
         response: MessageDto,
     },
@@ -151,6 +161,7 @@ impl From<StoredFlow> for FlowDto {
                     elapsed_ms: millis(head.elapsed),
                     duration_ms: bodies.as_ref().map(|b| millis(b.duration)),
                     in_progress: bodies.is_none(),
+                    rules: head.rules,
                     request: MessageDto {
                         headers: head.request_headers,
                         body: bodies.as_ref().map(|b| (&b.request).into()),
@@ -206,6 +217,28 @@ pub enum WsMessage {
         /// Texto.
         message: String,
     },
+    /// Un flujo quedó en pausa en un breakpoint (TD-011). Se resuelve con
+    /// `POST /api/v1/breakpoints/{key}`.
+    Paused {
+        /// Flujo en pausa.
+        paused: crate::breakpoint::PausedDto,
+    },
+    /// Un flujo dejó de estar en pausa (resuelto, vencido o el cliente cortó).
+    Resolved {
+        /// Clave.
+        key: u64,
+    },
+}
+
+impl From<proxyrr_rules::BreakpointEvent> for WsMessage {
+    fn from(event: proxyrr_rules::BreakpointEvent) -> Self {
+        match event {
+            proxyrr_rules::BreakpointEvent::Paused(flow) => Self::Paused {
+                paused: (&flow).into(),
+            },
+            proxyrr_rules::BreakpointEvent::Resolved { key } => Self::Resolved { key },
+        }
+    }
 }
 
 impl From<Notice> for WsMessage {

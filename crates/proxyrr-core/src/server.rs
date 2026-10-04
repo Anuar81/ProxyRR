@@ -14,7 +14,7 @@ use tokio::task::JoinHandle;
 
 use crate::config::ProxyConfig;
 use crate::event::FlowEvent;
-use crate::handler::{self, Context, HEADER_READ_TIMEOUT};
+use crate::handler::{self, Context, HEADER_READ_TIMEOUT, Replay};
 use crate::lifecycle::{Lifecycle, Phase};
 
 /// Capacidad del canal de eventos. Un suscriptor que se atrasa más que esto recibe `Lagged`.
@@ -36,6 +36,7 @@ pub struct Proxy {
     shutdown: oneshot::Sender<()>,
     accept_loop: JoinHandle<()>,
     lifecycle: Lifecycle,
+    ctx: Arc<Context>,
 }
 
 impl Proxy {
@@ -56,7 +57,7 @@ impl Proxy {
             lifecycle.tracker(),
         )?);
         let (shutdown, stop) = oneshot::channel();
-        let accept_loop = tokio::spawn(accept_loop(listener, ctx, stop));
+        let accept_loop = tokio::spawn(accept_loop(listener, Arc::clone(&ctx), stop));
         tracing::debug!(%local_addr, mitm = config.mitm.is_some(), "proxy escuchando");
         Ok(Self {
             local_addr,
@@ -64,7 +65,19 @@ impl Proxy {
             shutdown,
             accept_loop,
             lifecycle,
+            ctx,
         })
+    }
+
+    /// Manda un request armado a mano (Repeat, Compose) por el pipeline del proxy: se le aplican las
+    /// reglas y se captura como cualquier flujo, también si es HTTPS. Devuelve el id del flujo, cuyo
+    /// evento llega por [`Proxy::subscribe`].
+    ///
+    /// # Errors
+    ///
+    /// Método o URL inválidos, o una URL que apunta al propio proxy.
+    pub fn replay(&self, request: Replay) -> Result<u64, String> {
+        handler::replay(&self.ctx, request)
     }
 
     /// Dirección efectiva de escucha (resuelve el puerto real si se pidió el `0`).
@@ -87,20 +100,26 @@ impl Proxy {
     /// Apagado ordenado: deja de aceptar y libera el puerto, cierra los túneles opacos y las
     /// conexiones keep-alive ociosas, y espera hasta `grace` a que terminen los requests en curso. Lo
     /// que siga abierto pasado el plazo se corta. Al volver ya no queda ninguna conexión del proxy.
-    pub async fn shutdown_within(mut self, grace: Duration) {
-        let _ = self.shutdown.send(());
-        let _ = self.accept_loop.await;
-        self.lifecycle.set(Phase::Draining);
-        if tokio::time::timeout(grace, self.lifecycle.idle())
-            .await
-            .is_err()
-        {
+    pub async fn shutdown_within(self, grace: Duration) {
+        let Self {
+            shutdown,
+            accept_loop,
+            mut lifecycle,
+            ctx,
+            ..
+        } = self;
+        let _ = shutdown.send(());
+        let _ = accept_loop.await;
+        // El contexto lleva un tracker de conexiones: soltarlo para que `idle` cuente solo las que siguen.
+        drop(ctx);
+        lifecycle.set(Phase::Draining);
+        if tokio::time::timeout(grace, lifecycle.idle()).await.is_err() {
             tracing::debug!(
                 ?grace,
                 "se venció el plazo de apagado: se cortan las conexiones"
             );
-            self.lifecycle.set(Phase::Closing);
-            let _ = tokio::time::timeout(CLOSE_WAIT, self.lifecycle.idle()).await;
+            lifecycle.set(Phase::Closing);
+            let _ = tokio::time::timeout(CLOSE_WAIT, lifecycle.idle()).await;
         }
     }
 }

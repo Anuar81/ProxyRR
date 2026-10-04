@@ -16,11 +16,13 @@ use proxyrr_core::{Headers, LocalSite, ProxyConfig};
 use proxyrr_devices::guide::{self, GuideContext, Target};
 use proxyrr_devices::trust::{self, LinuxTools, Os, Runner, SystemRunner};
 use proxyrr_devices::{CaFiles, CertSite, lan_ip, qr_svg};
+use proxyrr_rules::{BreakpointEvent, RULES_FILE, Rule, Rules};
 use proxyrr_store::{Decoded, StoredFlow, decode_body};
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 
 use crate::android::{Android, ConfiguredDto, DevicesDto};
+use crate::tools::{self, ComposeDto, DraftKind, EditedDto, PausedDto};
 
 /// Carpeta de descargas del usuario, si existe.
 fn downloads_dir() -> Option<PathBuf> {
@@ -187,6 +189,7 @@ impl Backend {
             Arc::new(CertificateAuthority::load_or_create(data_dir).map_err(|e| e.to_string())?);
         let files = CaFiles::from_ca(&ca).map_err(|e| e.to_string())?;
         let site: Arc<dyn LocalSite> = Arc::new(CertSite::new(files.clone()));
+        let rules = Arc::new(Rules::load(&data_dir.join(RULES_FILE))?);
         let engine = Engine::new(EngineOptions {
             ca: Some(Arc::clone(&ca)),
             proxy: ProxyConfig {
@@ -194,6 +197,7 @@ impl Backend {
                 local_site_ca: Some(Arc::clone(&ca)),
                 ..ProxyConfig::default()
             },
+            rules: Some(rules),
             ..EngineOptions::default()
         });
         let linux = if os == Os::Linux {
@@ -277,6 +281,108 @@ impl Backend {
     #[must_use]
     pub fn subscribe(&self) -> broadcast::Receiver<Notice> {
         self.engine.subscribe()
+    }
+
+    /// Avisos de breakpoints. Mientras la ventana esté suscrita, los breakpoints pausan.
+    #[must_use]
+    pub fn subscribe_breakpoints(&self) -> broadcast::Receiver<BreakpointEvent> {
+        self.engine.rules().breakpoints().subscribe()
+    }
+
+    /// Reglas en orden.
+    #[must_use]
+    pub fn rules(&self) -> Vec<Rule> {
+        self.engine.rules().list()
+    }
+
+    /// Reemplaza las reglas (se guardan en `rules.json` y aplican desde el próximo request).
+    ///
+    /// # Errors
+    /// Patrón inválido o archivo que no se pudo escribir.
+    pub fn save_rules(&self, rules: Vec<Rule>) -> Result<Vec<Rule>, String> {
+        self.engine.rules().replace(rules)
+    }
+
+    /// Regla nueva completada con los datos de un flujo (sin guardarla).
+    ///
+    /// # Errors
+    /// Si el flujo ya no está o es un túnel.
+    pub fn draft_rule(&self, id: u64, kind: DraftKind) -> Result<Rule, String> {
+        match self.engine.store().get(id) {
+            Some(StoredFlow::Http(record)) => Ok(tools::draft_rule(&record, kind)),
+            Some(StoredFlow::Tunnel(_)) => Err("un túnel no tiene request para la regla".into()),
+            None => Err(format!("el flujo {id} ya no está")),
+        }
+    }
+
+    /// Flujos en pausa.
+    #[must_use]
+    pub fn paused(&self) -> Vec<PausedDto> {
+        self.engine
+            .rules()
+            .breakpoints()
+            .pending()
+            .iter()
+            .map(PausedDto::from)
+            .collect()
+    }
+
+    /// Decide sobre un flujo en pausa: `execute` (con `edited`), `continue` (sin cambios) o `abort`.
+    ///
+    /// # Errors
+    /// Acción desconocida, `execute` sin cambios, o flujo que ya no está en pausa.
+    pub fn resolve_breakpoint(
+        &self,
+        key: u64,
+        action: &str,
+        edited: Option<EditedDto>,
+    ) -> Result<(), String> {
+        let decision = proxyrr_api::breakpoint::ResolveDto {
+            action: action.to_owned(),
+            edited,
+        };
+        proxyrr_api::breakpoint::resolve(self.engine.rules().breakpoints(), key, decision)
+    }
+
+    /// Repite un flujo tal cual. Devuelve el id del flujo nuevo.
+    ///
+    /// # Errors
+    /// Proxy apagado, túnel o body recortado.
+    pub async fn replay_flow(&self, id: u64) -> Result<u64, String> {
+        self.engine.replay_flow(id).await
+    }
+
+    /// Request de un flujo para editarlo en Compose.
+    ///
+    /// # Errors
+    /// Túnel, flujo que ya no está o body recortado.
+    pub fn compose_from(&self, id: u64) -> Result<ComposeDto, String> {
+        self.engine
+            .replay_request(id)
+            .map(|r| ComposeDto::from_replay(&r))
+    }
+
+    /// Manda un request de Compose. Devuelve el id del flujo nuevo.
+    ///
+    /// # Errors
+    /// Proxy apagado, o método/URL inválidos.
+    pub async fn compose_send(&self, request: ComposeDto) -> Result<u64, String> {
+        self.engine.replay(request.into_replay()).await
+    }
+
+    /// Comando `curl` de un flujo, para bash (`"posix"`) o PowerShell (`"powershell"`).
+    ///
+    /// # Errors
+    /// Túnel, flujo que ya no está o body recortado.
+    pub fn curl(&self, id: u64, shell: &str) -> Result<String, String> {
+        let shell = if shell.eq_ignore_ascii_case("powershell") {
+            tools::CurlShell::PowerShell
+        } else {
+            tools::CurlShell::Posix
+        };
+        self.engine
+            .replay_request(id)
+            .map(|r| tools::curl_command_for(&r, shell))
     }
 
     /// Estado del proxy y del store.

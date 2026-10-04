@@ -41,14 +41,16 @@ pub struct HttpFlow {
     pub id: u64,
     /// Método (`GET`, `POST`…).
     pub method: String,
-    /// URL tal como la pidió el cliente (forma absoluta si es válida).
+    /// URL tal como la pidió el cliente (forma absoluta si es válida), aunque una regla la redirija.
     pub url: String,
-    /// Headers del request tal como los mandó el cliente.
+    /// Headers del request tal como salieron hacia el origen (con los cambios de las reglas).
     pub request_headers: Headers,
-    /// Status devuelto al cliente: el del origen, o el que generó el proxy (400/502/508).
+    /// Status devuelto al cliente: el del origen, el de una regla, o el que generó el proxy (400/502/508).
     pub status: u16,
-    /// Headers de la respuesta tal como los mandó el origen (o el proxy, si la generó él).
+    /// Headers de la respuesta tal como llegaron al cliente (antes de quitar los hop-by-hop).
     pub response_headers: Headers,
+    /// Reglas que modificaron el flujo (spec 0011), en el orden en que se aplicaron.
+    pub rules: Vec<String>,
     /// Motivo cuando el status lo generó el proxy por un error.
     pub error: Option<String>,
     /// Tiempo hasta tener los headers de la respuesta.

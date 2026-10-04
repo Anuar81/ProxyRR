@@ -16,7 +16,7 @@ scripting, protocolos) sin reescribir el núcleo.
 - **Certificados**: `rcgen` para CA y hojas; caché LRU de hojas por SNI.
 - **Persistencia**: SQLite (`rusqlite`, feature `bundled`) para sesiones; bodies grandes en archivos.
 - **UI**: Tauri 2 + frontend web. Una sola UI para los 3 SO, binario liviano.
-- **Licencia (tentativa)**: PolyForm Small Business 1.0.0 + licencia comercial aparte para empresas grandes.
+- **Licencia (confirmada en 0011)**: PolyForm Small Business 1.0.0 + licencia comercial aparte para empresas grandes.
   Las dependencias deben ser permisivas (MIT/Apache/BSD/ISC…); `cargo deny` rechaza GPL/AGPL/LGPL.
   Excepción (spec 0009): MPL-2.0 solo para 5 crates transitivos de Tauri (`cssparser`, `cssparser-macros`,
   `dtoa-short`, `selectors`, `option-ext`). Es copyleft por archivo: mientras no se modifiquen, no obliga

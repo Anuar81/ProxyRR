@@ -80,6 +80,25 @@ impl Tap {
         })
     }
 
+    /// Id del flujo.
+    pub(crate) fn id(&self) -> u64 {
+        self.id
+    }
+
+    /// Registra un body que el proxy ya tiene entero (uno editado en un breakpoint).
+    pub(crate) fn record_bytes(&self, side: Side, data: &Bytes, complete: bool) {
+        let take = self.limit.min(data.len());
+        self.finish(
+            side,
+            CapturedBody {
+                data: data.slice(..take),
+                size: data.len() as u64,
+                truncated: take < data.len(),
+                complete,
+            },
+        );
+    }
+
     /// Registra el final de un lado. Solo cuenta el primero; al tener los dos, emite una vez.
     fn finish(&self, side: Side, body: CapturedBody) {
         let mut slots = self.slots.lock().unwrap_or_else(PoisonError::into_inner);
@@ -136,6 +155,14 @@ impl<B: Body> Recorder<B> {
                 size: 0,
                 truncated: false,
             }),
+        }
+    }
+
+    /// Reenvía `inner` sin capturar (su body ya se registró con [`Tap::record_bytes`]).
+    pub(crate) fn plain(inner: B) -> Self {
+        Self {
+            inner,
+            capture: None,
         }
     }
 

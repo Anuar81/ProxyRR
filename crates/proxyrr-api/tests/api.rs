@@ -602,3 +602,199 @@ async fn har_export_contains_captured_flows() {
     assert_eq!(entry["response"]["status"], 200);
     assert!(entry["startedDateTime"].as_str().unwrap().ends_with('Z'));
 }
+
+/// Espera un flujo terminado con este id en la lista.
+async fn wait_flow(api: &ApiServer, id: u64) -> Value {
+    timeout(LIMIT, async {
+        loop {
+            let flows = call(api, "GET", "/api/v1/flows", "").await.json();
+            if let Some(flow) = flows
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|f| f["id"] == id && f["in_progress"] == false)
+            {
+                return flow.clone();
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("el flujo no llegó al store")
+}
+
+#[tokio::test]
+async fn rules_and_replay() {
+    let (engine, api) = start(Engine::new(EngineOptions::default())).await;
+    assert_eq!(
+        call(&api, "GET", "/api/v1/rules", "").await.json(),
+        serde_json::json!([])
+    );
+    let bad = call(
+        &api,
+        "PUT",
+        "/api/v1/rules",
+        r#"[{"name":"mala","url":"(","regex":true,"action":{"type":"no_cache"}}]"#,
+    )
+    .await;
+    assert_eq!(bad.status, 422);
+    assert_eq!(bad.error_code(), "invalid_rules");
+
+    let origin = start_origin().await;
+    let saved = call(
+        &api,
+        "PUT",
+        "/api/v1/rules",
+        r#"[{"name":"mock","url":"*/mock*","action":{"type":"map_local","status":201,"body":"hola"}}]"#,
+    )
+    .await;
+    assert_eq!(
+        saved.status,
+        200,
+        "{}",
+        String::from_utf8_lossy(&saved.body)
+    );
+    assert_eq!(saved.json()[0]["id"], 1);
+    assert_eq!(engine.rules().list().len(), 1);
+
+    // Repetir con el proxy apagado no se puede.
+    let started = call(
+        &api,
+        "POST",
+        "/api/v1/proxy/start",
+        r#"{"listen":"127.0.0.1:0"}"#,
+    )
+    .await
+    .json();
+    let proxy = proxy_addr(&started);
+    let mock = raw(
+        proxy,
+        &origin.to_string(),
+        "GET",
+        &format!("http://{origin}/mock"),
+        "",
+        "",
+    )
+    .await;
+    assert_eq!(mock.status, 201);
+    let first = through_proxy(&api, proxy, origin, "/real").await;
+
+    let replayed = call(&api, "POST", &format!("/api/v1/flows/{first}/replay"), "").await;
+    assert_eq!(replayed.status, 202);
+    let new_id = replayed.json()["id"].as_u64().unwrap();
+    assert!(new_id > first);
+    let flow = wait_flow(&api, new_id).await;
+    assert_eq!(flow["url"], format!("http://{origin}/real"));
+    assert_eq!(flow["status"], 200);
+
+    let mocked = engine
+        .store()
+        .list()
+        .into_iter()
+        .find(|f| f.url.ends_with("/mock"))
+        .unwrap();
+    assert_eq!(mocked.rules, ["mock"]);
+    assert_eq!(
+        call(&api, "POST", "/api/v1/flows/9999/replay", "")
+            .await
+            .status,
+        404
+    );
+    call(&api, "POST", "/api/v1/proxy/stop", "").await;
+    let off = call(&api, "POST", &format!("/api/v1/flows/{first}/replay"), "").await;
+    assert_eq!(off.status, 409);
+    assert!(
+        off.json()["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("apagado")
+    );
+}
+
+#[tokio::test]
+async fn breakpoints_pause_while_a_websocket_listens_and_resolve_by_api() {
+    let (_engine, api) = start(Engine::new(EngineOptions::default())).await;
+    let origin = start_origin().await;
+    let saved = call(
+        &api,
+        "PUT",
+        "/api/v1/rules",
+        r#"[{"name":"bp","url":"*/pausa*","action":{"type":"breakpoint","request":true,"response":false}}]"#,
+    )
+    .await;
+    assert_eq!(
+        saved.status,
+        200,
+        "{}",
+        String::from_utf8_lossy(&saved.body)
+    );
+    let started = call(
+        &api,
+        "POST",
+        "/api/v1/proxy/start",
+        r#"{"listen":"127.0.0.1:0"}"#,
+    )
+    .await
+    .json();
+    let proxy = proxy_addr(&started);
+    let url = format!(
+        "ws://{}/api/v1/events?token={}",
+        api.local_addr(),
+        api.token()
+    );
+    let (mut ws, _) = tokio_tungstenite::connect_async(url).await.unwrap();
+    assert_eq!(next_json(&mut ws).await["type"], "hello");
+
+    let target = format!("http://{origin}/pausa");
+    let host = origin.to_string();
+    let client =
+        tokio::spawn(async move { raw(proxy, &host, "GET", &target, "", "").await.status });
+    let paused = next_of(&mut ws, "paused").await;
+    assert_eq!(paused["paused"]["stage"], "request");
+    assert_eq!(paused["paused"]["url"], format!("http://{origin}/pausa"));
+    let key = paused["paused"]["key"].as_u64().unwrap();
+
+    let listed = call(&api, "GET", "/api/v1/breakpoints", "").await.json();
+    assert_eq!(listed.as_array().unwrap().len(), 1);
+    let bad = call(
+        &api,
+        "POST",
+        &format!("/api/v1/breakpoints/{key}"),
+        r#"{"action":"nada"}"#,
+    )
+    .await;
+    assert_eq!(bad.status, 400);
+    let ok = call(
+        &api,
+        "POST",
+        &format!("/api/v1/breakpoints/{key}"),
+        r#"{"action":"abort"}"#,
+    )
+    .await;
+    assert_eq!(ok.status, 204);
+    assert_eq!(next_of(&mut ws, "resolved").await["key"], key);
+    assert_eq!(timeout(LIMIT, client).await.unwrap().unwrap(), 503);
+    let gone = call(
+        &api,
+        "POST",
+        &format!("/api/v1/breakpoints/{key}"),
+        r#"{"action":"continue"}"#,
+    )
+    .await;
+    assert_eq!(gone.status, 404);
+    assert_eq!(gone.error_code(), "not_paused");
+
+    // Sin nadie escuchando el WebSocket, el breakpoint no pausa.
+    drop(ws);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let free = raw(
+        proxy,
+        &origin.to_string(),
+        "GET",
+        &format!("http://{origin}/pausa"),
+        "",
+        "",
+    )
+    .await;
+    assert_eq!(free.status, 200);
+}

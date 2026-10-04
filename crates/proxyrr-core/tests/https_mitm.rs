@@ -468,3 +468,45 @@ async fn local_ca_never_decrypts_other_hosts() {
     let (status, _) = get(&mut client, &target, "/").await;
     assert_eq!(status, 200);
 }
+
+#[tokio::test]
+async fn decrypted_tunnel_closed_without_requests_hints_pinning() {
+    let origin = start_https_origin("localhost").await;
+    let (proxy, ca) = start_mitm_proxy_with_ca(&origin).await;
+    let mut events = proxy.subscribe();
+    let target = format!("localhost:{}", origin.addr.port());
+    let stream = connect(proxy.local_addr(), &target).await;
+    // Como un cliente con pinning: el handshake sale bien y corta sin mandar nada.
+    let tls_stream = tls(stream, "localhost", &ca).await.unwrap();
+    let opened = next_tunnel(&mut events).await;
+    assert!(opened.intercepted && opened.error.is_none());
+    drop(tls_stream);
+    let closed = next_tunnel(&mut events).await;
+    assert_eq!(closed.id, opened.id, "reemplaza el mismo túnel");
+    assert_eq!(
+        closed.elapsed, opened.elapsed,
+        "conserva el tiempo de apertura"
+    );
+    let hint = closed.error.expect("debe avisar");
+    assert!(hint.contains("pinning"), "{hint}");
+}
+
+#[tokio::test]
+async fn decrypted_tunnel_with_requests_has_no_hint() {
+    let origin = start_https_origin("localhost").await;
+    let (proxy, ca) = start_mitm_proxy_with_ca(&origin).await;
+    let mut events = proxy.subscribe();
+    let target = format!("localhost:{}", origin.addr.port());
+    let stream = connect(proxy.local_addr(), &target).await;
+    let mut sender = http_client(tls(stream, "localhost", &ca).await.unwrap()).await;
+    let (status, _) = get(&mut sender, &target, "/x").await;
+    assert_eq!(status, 200);
+    drop(sender);
+    // Después del cierre no tiene que llegar un segundo evento de túnel con aviso.
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(500);
+    while let Ok(Ok(event)) = tokio::time::timeout_at(deadline, events.recv()).await {
+        if let FlowEvent::Tunnel(t) = event {
+            assert!(t.error.is_none(), "{:?}", t.error);
+        }
+    }
+}

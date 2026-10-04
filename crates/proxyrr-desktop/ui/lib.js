@@ -53,6 +53,36 @@ export function matchesFilter(flow, query) {
   });
 }
 
+/**
+ * `true` para un `CONNECT` descifrado sin avisos: no aporta nada porque sus requests ya están en
+ * la lista como flujos `https://`. Los que tienen error o aviso (p. ej. posible pinning) se muestran.
+ */
+export function isQuietTunnel(flow) {
+  return Boolean(flow.tunnel && flow.intercepted && !flow.failed);
+}
+
+/** Si `flow` va en la lista: filtro de texto y, salvo `showTunnels`, sin los túneles silenciosos. */
+export function isShown(flow, query, showTunnels = false) {
+  return (showTunnels || !isQuietTunnel(flow)) && matchesFilter(flow, query);
+}
+
+/** `host:puerto` de una URL http(s) (puerto por defecto incluido), o `""` si no parsea. */
+export function authorityOf(url) {
+  try {
+    const u = new URL(url);
+    const port = u.port || (u.protocol === "https:" ? "443" : u.protocol === "http:" ? "80" : "");
+    return port ? `${u.hostname}:${port}`.toLowerCase() : "";
+  } catch {
+    return "";
+  }
+}
+
+/** Flujos HTTP que fueron a `authority` (el destino de un túnel), en orden. */
+export function requestsTo(flows, authority) {
+  const want = (authority || "").toLowerCase();
+  return flows.filter((f) => !f.tunnel && authorityOf(f.url) === want);
+}
+
 /** JSON con sangría; si no parsea, el texto tal cual. */
 export function prettyJson(text) {
   try {
@@ -101,6 +131,16 @@ export function portOf(listen, fallback = 9090) {
   const match = /:(\d+)$/.exec((listen || "").trim());
   const port = match ? Number(match[1]) : NaN;
   return Number.isInteger(port) && port > 0 && port < 65536 ? port : fallback;
+}
+
+/**
+ * `true` si `listen` solo acepta conexiones de esta máquina (127.x, `localhost`, `[::1]`):
+ * un teléfono en la red no puede llegar a esa dirección.
+ */
+export function isLoopbackListen(listen) {
+  const text = (listen || "").trim().toLowerCase();
+  const host = text.startsWith("[") ? text.slice(1, text.indexOf("]")) : text.replace(/:\d+$/, "");
+  return host === "" || host === "localhost" || host === "::1" || /^127\./.test(host);
 }
 
 /** `a, b ,, c` → `["a", "b", "c"]`. */
@@ -164,11 +204,94 @@ export class FlowList {
   }
 
   /** Flujos en orden, opcionalmente filtrados. */
-  visible(query) {
-    return this.ids.map((id) => this.byId.get(id)).filter((f) => matchesFilter(f, query));
+  visible(query, showTunnels = false) {
+    return this.ids.map((id) => this.byId.get(id)).filter((f) => isShown(f, query, showTunnels));
   }
 
   lastId() {
     return this.ids.length ? this.ids[this.ids.length - 1] : undefined;
   }
+}
+
+
+// ---------- Reglas (spec 0011) ----------
+
+/** Nombre visible de cada tipo de regla. */
+export const ACTION_LABELS = {
+  map_local: "Map Local",
+  map_remote: "Map Remote",
+  block: "Block",
+  no_cache: "No Caching",
+  breakpoint: "Breakpoint",
+};
+
+/** Headers `[[nombre, valor]]` → una línea `Nombre: valor` por header. */
+export function headersToText(headers) {
+  return (headers || []).map(([name, value]) => `${name}: ${value}`).join("\n");
+}
+
+/** Inversa de `headersToText`. Ignora líneas vacías y sin `:`; el valor puede tener `:`. */
+export function parseHeaders(text) {
+  const out = [];
+  for (const line of (text || "").split(/\r?\n/)) {
+    const i = line.indexOf(":");
+    if (i <= 0) continue;
+    const name = line.slice(0, i).trim();
+    if (name) out.push([name, line.slice(i + 1).trim()]);
+  }
+  return out;
+}
+
+/** Acción por defecto de cada tipo, para el editor. */
+export function defaultAction(type) {
+  switch (type) {
+    case "map_local":
+      return { type, status: 200, headers: [["content-type", "application/json"]], body: "{}", file: null };
+    case "map_remote":
+      return { type, scheme: "http", host: "localhost", port: 3000, path: null, query: null, preserve_host: false };
+    case "block":
+      return { type, status: 403 };
+    case "breakpoint":
+      return { type, request: true, response: true };
+    default:
+      return { type: "no_cache" };
+  }
+}
+
+/** Regla vacía (id 0: la asigna el backend al guardar). */
+export function emptyRule(type = "map_local") {
+  return { id: 0, name: "", enabled: true, method: null, url: "", regex: false, action: defaultAction(type) };
+}
+
+/** Qué hace una regla, en una línea. */
+export function ruleSummary(rule) {
+  const a = rule.action;
+  switch (a.type) {
+    case "map_local":
+      return a.file ? `responde ${a.status} con ${a.file}` : `responde ${a.status} (${a.body.length} caracteres)`;
+    case "map_remote": {
+      const parts = [a.scheme && `${a.scheme}://`, a.host, a.port && `:${a.port}`, a.path, a.query && `?${a.query}`].filter(Boolean);
+      return `→ ${parts.join("") || "(sin cambios)"}${a.preserve_host ? " · Host original" : ""}`;
+    }
+    case "block":
+      return `responde ${a.status}`;
+    case "breakpoint":
+      return [a.request && "request", a.response && "response"].filter(Boolean).join(" + ") || "(nada)";
+    default:
+      return "sin caché";
+  }
+}
+
+/** Campo de texto opcional: vacío → `null`. */
+export function optional(text) {
+  const t = (text || "").trim();
+  return t ? t : null;
+}
+
+/** Número entero en rango, o `null` si está vacío o es inválido. */
+export function optionalInt(text, min, max) {
+  const t = (text || "").trim();
+  if (!/^\d+$/.test(t)) return null;
+  const n = Number(t);
+  return n >= min && n <= max ? n : null;
 }

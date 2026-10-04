@@ -133,8 +133,10 @@ pub(crate) fn describe_client_tls_error(error: &io::Error) -> String {
         .and_then(|inner| inner.downcast_ref::<rustls::Error>());
     match rustls_error {
         Some(rustls::Error::AlertReceived(UnknownCA | BadCertificate | CertificateUnknown)) => {
-            "el cliente no confía en la CA de ProxyRR: instalala como raíz de confianza \
-             (`proxyrr ca export --out ca.pem`) o excluí este host con --bypass"
+            "el cliente no confía en la CA de ProxyRR. En una PC: `proxyrr ca install` (o el menú \
+             Certificado). En Android/iOS: instalá la CA en el dispositivo (Certificado... → guía) y, \
+             en apps propias, declarala en su network_security_config (solo debug). Si la app hace \
+             pinning, no se puede descifrar: excluí el host con --bypass"
                 .to_owned()
         }
         _ => format!("falló el handshake TLS con el cliente: {error}"),

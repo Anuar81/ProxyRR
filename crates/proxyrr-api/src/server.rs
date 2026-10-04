@@ -16,6 +16,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use bytes::Bytes;
 use proxyrr_core::Headers;
+use proxyrr_rules::Rule;
 use proxyrr_store::StoredFlow;
 use serde::Deserialize;
 use tokio::net::TcpListener;
@@ -23,6 +24,7 @@ use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
+use crate::breakpoint::{self, PausedDto, ResolveDto};
 use crate::dto::{FlowDto, FlowSummaryDto, StatusDto, WsMessage};
 use crate::engine::{Engine, EngineError, ProxySettings};
 
@@ -191,8 +193,12 @@ fn router(state: AppState) -> Router {
         .route("/api/v1/proxy/stop", post(stop_proxy))
         .route("/api/v1/flows", get(list_flows).delete(clear_flows))
         .route("/api/v1/flows/{id}", get(get_flow))
+        .route("/api/v1/flows/{id}/replay", post(replay_flow))
         .route("/api/v1/flows/{id}/{side}/body", get(get_body))
+        .route("/api/v1/rules", get(get_rules).put(put_rules))
         .route("/api/v1/har", get(har))
+        .route("/api/v1/breakpoints", get(list_breakpoints))
+        .route("/api/v1/breakpoints/{key}", post(resolve_breakpoint))
         .route(EVENTS_PATH, get(events))
         .fallback(|| async { Failure::new(StatusCode::NOT_FOUND, "not_found", "ruta desconocida") })
         .method_not_allowed_fallback(|| async {
@@ -389,6 +395,44 @@ fn parse_id(raw: &str) -> Result<u64, Failure> {
         .map_err(|_| Failure::new(StatusCode::NOT_FOUND, "not_found", "id de flujo inválido"))
 }
 
+/// `GET /api/v1/rules`: reglas en orden.
+async fn get_rules(State(state): State<AppState>) -> Json<Vec<Rule>> {
+    Json(state.engine.rules().list())
+}
+
+/// `PUT /api/v1/rules`: reemplaza todas las reglas (aplican desde el próximo request).
+async fn put_rules(State(state): State<AppState>, body: Bytes) -> Result<Json<Vec<Rule>>, Failure> {
+    let rules: Vec<Rule> = serde_json::from_slice(&body)
+        .map_err(|e| Failure::new(StatusCode::BAD_REQUEST, "bad_request", e.to_string()))?;
+    state
+        .engine
+        .rules()
+        .replace(rules)
+        .map(Json)
+        .map_err(|e| Failure::new(StatusCode::UNPROCESSABLE_ENTITY, "invalid_rules", e))
+}
+
+/// `POST /api/v1/flows/{id}/replay`: repite el request; devuelve el id del flujo nuevo.
+async fn replay_flow(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Response, Failure> {
+    let id = parse_id(&id)?;
+    if state.engine.store().get(id).is_none() {
+        return Err(Failure::not_found(id));
+    }
+    let new_id = state
+        .engine
+        .replay_flow(id)
+        .await
+        .map_err(|e| Failure::new(StatusCode::CONFLICT, "replay_failed", e))?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(serde_json::json!({ "id": new_id })),
+    )
+        .into_response())
+}
+
 async fn get_flow(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -396,6 +440,40 @@ async fn get_flow(
     let id = parse_id(&id)?;
     let flow = state.engine.store().get(id).ok_or(Failure::not_found(id))?;
     Ok(Json(flow.into()))
+}
+
+/// Flujos en pausa (TD-011). Solo pausan mientras haya un cliente en `/api/v1/events`.
+async fn list_breakpoints(State(state): State<AppState>) -> Json<Vec<PausedDto>> {
+    Json(
+        state
+            .engine
+            .rules()
+            .breakpoints()
+            .pending()
+            .iter()
+            .map(PausedDto::from)
+            .collect(),
+    )
+}
+
+/// Decide sobre un flujo en pausa: `{"action": "continue" | "abort" | "execute", "edited": {...}}`.
+async fn resolve_breakpoint(
+    State(state): State<AppState>,
+    Path(key): Path<String>,
+    body: Bytes,
+) -> Result<StatusCode, Failure> {
+    let key = parse_id(&key)?;
+    let decision: ResolveDto = serde_json::from_slice(&body)
+        .map_err(|e| Failure::new(StatusCode::BAD_REQUEST, "bad_request", e.to_string()))?;
+    breakpoint::resolve(state.engine.rules().breakpoints(), key, decision)
+        .map(|()| StatusCode::NO_CONTENT)
+        .map_err(|e| {
+            if e == breakpoint::NOT_PAUSED {
+                Failure::new(StatusCode::NOT_FOUND, "not_paused", e)
+            } else {
+                Failure::new(StatusCode::BAD_REQUEST, "invalid_decision", e)
+            }
+        })
 }
 
 /// Bytes tal como viajaron (CA 7). `nosniff` + `sandbox`: un HTML capturado no corre en este origen.
@@ -482,6 +560,8 @@ async fn events(
 async fn stream_events(mut socket: WebSocket, state: AppState) {
     // Suscribir antes de armar el `hello`: nada queda entre los dos.
     let mut notices = state.engine.subscribe();
+    // Mientras este cliente esté conectado, los breakpoints pausan (hay quien los resuelva).
+    let mut paused = state.engine.rules().breakpoints().subscribe();
     let mut stop = state.stop;
     let hello = WsMessage::Hello {
         status: state.engine.status().await.into(),
@@ -499,6 +579,11 @@ async fn stream_events(mut socket: WebSocket, state: AppState) {
             },
             notice = notices.recv() => match notice {
                 Ok(notice) => WsMessage::from(notice),
+                Err(RecvError::Lagged(missed)) => WsMessage::Lagged { missed },
+                Err(RecvError::Closed) => break,
+            },
+            event = paused.recv() => match event {
+                Ok(event) => WsMessage::from(event),
                 Err(RecvError::Lagged(missed)) => WsMessage::Lagged { missed },
                 Err(RecvError::Closed) => break,
             },

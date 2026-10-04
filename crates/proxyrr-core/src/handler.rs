@@ -5,14 +5,19 @@ use std::error::Error as StdError;
 use std::io;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use http_body_util::combinators::BoxBody;
-use http_body_util::{BodyExt, Empty, Full};
-use hyper::body::Incoming;
-use hyper::header::{CONNECTION, CONTENT_LENGTH, CONTENT_TYPE, HeaderMap, HeaderValue};
+use http_body_util::{BodyExt, Empty, Full, Limited};
+use hyper::body::{Body, Incoming};
+use hyper::header::{
+    CONNECTION, CONTENT_LENGTH, CONTENT_TYPE, HOST, HeaderMap, HeaderName, HeaderValue,
+    TRANSFER_ENCODING,
+};
 use hyper::http::uri::PathAndQuery;
+use hyper::http::{request, response};
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode, Uri, Version};
@@ -32,15 +37,16 @@ use tokio_rustls::LazyConfigAcceptor;
 
 use crate::capture::{Recorder, Side, Tap, headers_vec};
 use crate::config::{FlowIds, MitmConfig, ProxyConfig};
-use crate::event::{FlowEvent, HttpFlow, TunnelFlow};
+use crate::event::{FlowEvent, Headers, HttpFlow, TunnelFlow};
 use crate::guard::{GuardedConnector, LoopError, SelfGuard};
 use crate::headers::strip_hop_by_hop;
+use crate::hook::{FlowHook, HeaderEdits, Paused, Plan, RequestHead, Stage, Verdict};
 use crate::lifecycle::{Phase, Tracker};
-use crate::local::{self, LOCAL_HOST, LocalRequest, LocalSite};
+use crate::local::{self, LOCAL_HOST, LocalRequest, LocalResponse, LocalSite};
 use crate::mitm::{Mitm, Prefixed, TLS_HANDSHAKE, crypto_provider, describe_client_tls_error};
 
 pub(crate) type ProxyBody = BoxBody<Bytes, hyper::Error>;
-type UpstreamClient = Client<HttpsConnector<GuardedConnector>, Recorder<Incoming>>;
+type UpstreamClient = Client<HttpsConnector<GuardedConnector>, Recorder<ProxyBody>>;
 
 const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(90);
 /// Tiempo máximo para recibir los headers de un request (corta conexiones colgadas / slowloris).
@@ -63,6 +69,7 @@ pub(crate) struct Context {
     local_tls: Option<Mitm>,
     max_body_capture: usize,
     local_site: Option<Arc<dyn LocalSite>>,
+    hook: Option<Arc<dyn FlowHook>>,
     tracker: Tracker,
 }
 
@@ -109,6 +116,7 @@ impl Context {
             local_tls,
             max_body_capture: config.max_body_capture,
             local_site: config.local_site.clone(),
+            hook: config.hook.clone(),
             tracker,
         })
     }
@@ -240,6 +248,14 @@ impl Reject {
     fn response(&self) -> Response<ProxyBody> {
         text_response(self.status, &self.message)
     }
+
+    fn with_status(mut self, status: StatusCode) -> Self {
+        // Solo el límite cambia de status según el lado; los cortes conservan el suyo.
+        if self.status == StatusCode::PAYLOAD_TOO_LARGE {
+            self.status = status;
+        }
+        self
+    }
 }
 
 /// Destino validado de un `CONNECT`.
@@ -280,7 +296,26 @@ impl TunnelLog {
             elapsed: self.started.elapsed(),
         }));
     }
+
+    /// Re-emite un túnel descifrado ya abierto (mismo id: el store lo reemplaza) con un aviso,
+    /// conservando el tiempo de apertura original.
+    fn emit_at(&self, ctx: &Context, elapsed: Duration, warning: Option<String>) {
+        ctx.emit(FlowEvent::Tunnel(TunnelFlow {
+            id: self.id,
+            authority: self.authority.clone(),
+            status: StatusCode::OK.as_u16(),
+            intercepted: true,
+            error: warning,
+            elapsed,
+        }));
+    }
 }
+
+/// Aviso para un túnel descifrado que se cerró sin mandar ningún request.
+pub(crate) const NO_REQUESTS_HINT: &str = "el túnel se descifró pero el cliente lo cerró sin \
+    mandar ningún request: suele ser certificate pinning (OkHttp CertificatePinner, <pin-set>) o \
+    una conexión abierta por adelantado que no se usó. Si se repite en cada intento, desactivá el \
+    pinning en debug o excluí el host con --bypass";
 
 pub(crate) async fn handle(
     req: Request<Incoming>,
@@ -290,36 +325,56 @@ pub(crate) async fn handle(
         tunnel(req, ctx).await
     } else {
         let check = check_http_target(req.uri(), &ctx.guard);
-        exchange(req, ctx, check).await
+        exchange(req.map(BodyExt::boxed), ctx, check, ctx.next_id()).await
     })
 }
 
-/// Reenvía un request al origen (ya validado por `check`), captura sus bodies y emite sus eventos.
+/// Lo que se va sabiendo del flujo para su evento.
+#[derive(Debug, Default)]
+struct Notes {
+    /// Headers del request tal como salieron (o como llegaron, si no salió).
+    request_headers: Headers,
+    rules: Vec<String>,
+    /// Método y URL con los que salió el request (para mostrarlos al pausar la respuesta).
+    method: String,
+    url: String,
+}
+
+/// Reenvía un request al origen (ya validado por `check`) aplicando las reglas, captura sus bodies y
+/// emite sus eventos.
 async fn exchange(
-    req: Request<Incoming>,
+    req: Request<ProxyBody>,
     ctx: &Context,
     check: Result<(), Reject>,
+    id: u64,
 ) -> Response<ProxyBody> {
-    let id = ctx.next_id();
     let started = Instant::now();
     let tap = Tap::new(id, started, ctx.max_body_capture, ctx.events.clone());
     let method = req.method().to_string();
     let url = req.uri().to_string();
-    let request_headers = headers_vec(req.headers());
-    let req = req.map(|body| Recorder::new(body, Arc::clone(&tap), Side::Request));
+    let mut notes = Notes {
+        request_headers: headers_vec(req.headers()),
+        ..Notes::default()
+    };
 
     let outcome = if let Some(response) = local_response(&req, ctx) {
-        // El sitio local va antes que la validación: `/cert` directo no tiene forma absoluta.
+        // El sitio local va antes que la validación y las reglas: `/cert` directo no tiene forma absoluta.
+        drop(req.map(|body| Recorder::new(body, Arc::clone(&tap), Side::Request)));
         let headers = headers_vec(response.headers());
         Ok((response, headers))
     } else if let Err(reject) = check {
+        drop(req.map(|body| Recorder::new(body, Arc::clone(&tap), Side::Request)));
         Err(reject)
     } else {
-        send_upstream(req, ctx).await.map(|mut response| {
-            let headers = headers_vec(response.headers());
-            strip_hop_by_hop(response.headers_mut());
-            (response.map(BodyExt::boxed), headers)
-        })
+        let plan = ctx.hook.as_ref().map_or_else(Plan::default, |hook| {
+            hook.plan(&RequestHead {
+                id,
+                method: method.clone(),
+                url: url.clone(),
+                headers: notes.request_headers.clone(),
+            })
+        });
+        forward(req, ctx, plan, &tap, &mut notes).await
     };
     let (response, response_headers, error) = match outcome {
         Ok((response, headers)) => (response, headers, None),
@@ -335,9 +390,10 @@ async fn exchange(
         id,
         method,
         url,
-        request_headers,
+        request_headers: notes.request_headers,
         status: response.status().as_u16(),
         response_headers,
+        rules: notes.rules,
         error,
         elapsed: started.elapsed(),
         content_length: content_length(response.headers()),
@@ -345,8 +401,329 @@ async fn exchange(
     response.map(|body| Recorder::new(body, tap, Side::Response).boxed())
 }
 
+/// Ejecuta el plan de las reglas: request (headers, Map Remote, pausa), respuesta local o del origen,
+/// y respuesta (headers, pausa). Devuelve la respuesta y sus headers para el evento.
+async fn forward(
+    req: Request<ProxyBody>,
+    ctx: &Context,
+    plan: Plan,
+    tap: &Arc<Tap>,
+    notes: &mut Notes,
+) -> Result<(Response<ProxyBody>, Headers), Reject> {
+    notes.rules.clone_from(&plan.rules);
+    let (mut parts, body) = req.into_parts();
+    edit_headers(&mut parts.headers, &plan.request_headers);
+    if let Some(target) = &plan.redirect
+        && let Err(reject) = redirect(&mut parts, target, plan.preserve_host, &ctx.guard)
+    {
+        drop(Recorder::new(body, Arc::clone(tap), Side::Request));
+        return Err(reject);
+    }
+
+    if let Some(local) = plan.respond {
+        notes.request_headers = headers_vec(&parts.headers);
+        // El body no se reenvía, pero se lee (y captura) igual: la conexión lo necesita consumido.
+        drain(Recorder::new(body, Arc::clone(tap), Side::Request)).await;
+        let mut response = local_to_response(local);
+        edit_headers(response.headers_mut(), &plan.response_headers);
+        let headers = headers_vec(response.headers());
+        return Ok((response, headers));
+    }
+
+    let body = if plan.pause_request {
+        pause_request(&mut parts, body, ctx, tap).await?
+    } else {
+        Recorder::new(body, Arc::clone(tap), Side::Request)
+    };
+    notes.request_headers = headers_vec(&parts.headers);
+    notes.method = parts.method.to_string();
+    notes.url = parts.uri.to_string();
+    let response = send_upstream(Request::from_parts(parts, body), ctx).await?;
+
+    let (mut parts, body) = response.into_parts();
+    edit_headers(&mut parts.headers, &plan.response_headers);
+    if plan.pause_response {
+        return pause_response(parts, body, notes, ctx, tap).await;
+    }
+    let headers = headers_vec(&parts.headers);
+    strip_hop_by_hop(&mut parts.headers);
+    Ok((Response::from_parts(parts, body.boxed()), headers))
+}
+
+/// Pausa el request: lo junta entero, espera la decisión del hook y aplica los cambios.
+async fn pause_request(
+    parts: &mut request::Parts,
+    body: ProxyBody,
+    ctx: &Context,
+    tap: &Tap,
+) -> Result<Recorder<ProxyBody>, Reject> {
+    let data = match collect_limited(body, ctx.max_body_capture).await {
+        Ok(data) => data,
+        Err(reject) => {
+            tap.record_bytes(Side::Request, &Bytes::new(), false);
+            return Err(reject.with_status(StatusCode::PAYLOAD_TOO_LARGE));
+        }
+    };
+    let Some(hook) = &ctx.hook else {
+        tap.record_bytes(Side::Request, &data, true);
+        return Ok(Recorder::plain(full(data)));
+    };
+    let paused = Paused {
+        id: tap.id(),
+        method: parts.method.to_string(),
+        url: parts.uri.to_string(),
+        status: None,
+        headers: headers_vec(&parts.headers),
+        body: data,
+    };
+    match hook.pause(Stage::Request, paused).await {
+        Verdict::Abort => {
+            tap.record_bytes(Side::Request, &Bytes::new(), false);
+            Err(aborted())
+        }
+        Verdict::Continue(edited) => {
+            let applied = apply_request_edit(parts, &edited, &ctx.guard);
+            tap.record_bytes(Side::Request, &edited.body, applied.is_ok());
+            applied?;
+            Ok(Recorder::plain(full(edited.body)))
+        }
+    }
+}
+
+fn apply_request_edit(
+    parts: &mut request::Parts,
+    edited: &Paused,
+    guard: &SelfGuard,
+) -> Result<(), Reject> {
+    parts.method = Method::from_bytes(edited.method.trim().as_bytes()).map_err(|_| {
+        Reject::new(
+            StatusCode::BAD_REQUEST,
+            format!(
+                "ProxyRR: método inválido en el breakpoint: {}",
+                edited.method
+            ),
+        )
+    })?;
+    let uri: Uri = edited.url.trim().parse().map_err(|_| {
+        Reject::new(
+            StatusCode::BAD_REQUEST,
+            format!("ProxyRR: URL inválida en el breakpoint: {}", edited.url),
+        )
+    })?;
+    check_absolute_target(&uri, guard)?;
+    parts.uri = uri;
+    parts.headers = rebuild_headers(&edited.headers);
+    Ok(())
+}
+
+/// Pausa la respuesta: la junta entera, espera la decisión del hook y arma la respuesta final.
+async fn pause_response(
+    mut parts: response::Parts,
+    body: Incoming,
+    notes: &Notes,
+    ctx: &Context,
+    tap: &Tap,
+) -> Result<(Response<ProxyBody>, Headers), Reject> {
+    let data = collect_limited(body.boxed(), ctx.max_body_capture)
+        .await
+        .map_err(|reject| reject.with_status(StatusCode::BAD_GATEWAY))?;
+    let headers = headers_vec(&parts.headers);
+    let paused = Paused {
+        id: tap.id(),
+        method: notes.method.clone(),
+        url: notes.url.clone(),
+        status: Some(parts.status.as_u16()),
+        headers,
+        body: data,
+    };
+    let verdict = match &ctx.hook {
+        Some(hook) => hook.pause(Stage::Response, paused).await,
+        None => Verdict::Continue(paused),
+    };
+    let Verdict::Continue(edited) = verdict else {
+        return Err(aborted());
+    };
+    parts.status = edited
+        .status
+        .and_then(|s| StatusCode::from_u16(s).ok())
+        .unwrap_or(parts.status);
+    parts.headers = rebuild_headers(&edited.headers);
+    let headers = headers_vec(&parts.headers);
+    strip_hop_by_hop(&mut parts.headers);
+    Ok((Response::from_parts(parts, full(edited.body)), headers))
+}
+
+/// Junta un body entero, hasta `limit` bytes.
+async fn collect_limited(body: ProxyBody, limit: usize) -> Result<Bytes, Reject> {
+    match Limited::new(body, limit).collect().await {
+        Ok(collected) => Ok(collected.to_bytes()),
+        Err(e) if e.is::<http_body_util::LengthLimitError>() => Err(Reject::new(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            format!(
+                "ProxyRR: el body supera {limit} bytes, el límite para pausarlo en un breakpoint."
+            ),
+        )),
+        Err(e) => Err(Reject::new(
+            StatusCode::BAD_GATEWAY,
+            format!("ProxyRR: el body se cortó antes de terminar: {e}"),
+        )),
+    }
+}
+
+/// Lee un body hasta el final sin guardarlo.
+async fn drain<B: Body + Unpin>(mut body: B) {
+    while let Some(frame) = body.frame().await {
+        if frame.is_err() {
+            break;
+        }
+    }
+}
+
+fn full(data: Bytes) -> ProxyBody {
+    Full::new(data).map_err(|never| match never {}).boxed()
+}
+
+fn aborted() -> Reject {
+    Reject::new(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "ProxyRR: abortado en un breakpoint.",
+    )
+}
+
+/// Aplica cambios de headers: primero quita, después fija. Los nombres o valores inválidos se ignoran.
+fn edit_headers(headers: &mut HeaderMap, edits: &HeaderEdits) {
+    for name in &edits.remove {
+        if let Ok(name) = HeaderName::from_bytes(name.trim().as_bytes()) {
+            headers.remove(name);
+        }
+    }
+    for (name, value) in &edits.set {
+        if let (Ok(name), Ok(value)) = (
+            HeaderName::from_bytes(name.trim().as_bytes()),
+            HeaderValue::from_str(value.trim()),
+        ) {
+            headers.insert(name, value);
+        }
+    }
+}
+
+/// Headers editados a mano: sin `Content-Length` ni `Transfer-Encoding`, que el proxy recalcula del
+/// body final. Los inválidos se ignoran.
+fn rebuild_headers(list: &[(String, String)]) -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    for (name, value) in list {
+        if let (Ok(name), Ok(value)) = (
+            HeaderName::from_bytes(name.trim().as_bytes()),
+            HeaderValue::from_str(value.trim()),
+        ) && name != CONTENT_LENGTH
+            && name != TRANSFER_ENCODING
+        {
+            headers.append(name, value);
+        }
+    }
+    headers
+}
+
+/// Map Remote: cambia el destino del request y, salvo `preserve_host`, su `Host`.
+fn redirect(
+    parts: &mut request::Parts,
+    target: &str,
+    preserve_host: bool,
+    guard: &SelfGuard,
+) -> Result<(), Reject> {
+    let uri: Uri = target.parse().map_err(|_| {
+        Reject::new(
+            StatusCode::BAD_GATEWAY,
+            format!("ProxyRR: Map Remote produjo una URL inválida: {target}"),
+        )
+    })?;
+    check_absolute_target(&uri, guard)?;
+    if !preserve_host
+        && let Some(value) = uri
+            .authority()
+            .and_then(|a| HeaderValue::from_str(a.as_str()).ok())
+    {
+        parts.headers.insert(HOST, value);
+    }
+    parts.uri = uri;
+    Ok(())
+}
+
+/// Valida una URL absoluta `http`/`https` que no apunte al propio proxy (Map Remote, breakpoints, replay).
+fn check_absolute_target(uri: &Uri, guard: &SelfGuard) -> Result<(), Reject> {
+    let default_port = match uri.scheme_str().map(str::to_ascii_lowercase).as_deref() {
+        Some("http") => 80,
+        Some("https") => 443,
+        _ => {
+            return Err(Reject::new(
+                StatusCode::BAD_REQUEST,
+                format!("ProxyRR: la URL tiene que empezar con http:// o https://: {uri}"),
+            ));
+        }
+    };
+    let Some(authority) = uri.authority() else {
+        return Err(Reject::new(
+            StatusCode::BAD_REQUEST,
+            format!("ProxyRR: la URL no tiene host: {uri}"),
+        ));
+    };
+    if guard.is_self_host(
+        authority.host(),
+        authority.port_u16().unwrap_or(default_port),
+    ) {
+        return Err(loop_detected());
+    }
+    Ok(())
+}
+
+/// Request armado a mano (Repeat, Edit & Repeat, Compose).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Replay {
+    /// Método.
+    pub method: String,
+    /// URL absoluta `http`/`https`.
+    pub url: String,
+    /// Headers (`Content-Length` y `Transfer-Encoding` se recalculan; sin `Host`, se toma de la URL).
+    pub headers: Headers,
+    /// Body.
+    pub body: Bytes,
+}
+
+/// Manda un request armado a mano por el pipeline normal (reglas + captura). Devuelve el id del flujo.
+pub(crate) fn replay(ctx: &Arc<Context>, replay: Replay) -> Result<u64, String> {
+    let method = Method::from_bytes(replay.method.trim().as_bytes())
+        .map_err(|_| format!("método inválido: {}", replay.method))?;
+    let uri: Uri = replay
+        .url
+        .trim()
+        .parse()
+        .map_err(|_| format!("URL inválida: {}", replay.url))?;
+    check_absolute_target(&uri, &ctx.guard).map_err(|r| r.message)?;
+    let mut headers = rebuild_headers(&replay.headers);
+    strip_hop_by_hop(&mut headers);
+    if !headers.contains_key(HOST)
+        && let Some(value) = uri
+            .authority()
+            .and_then(|a| HeaderValue::from_str(a.as_str()).ok())
+    {
+        headers.insert(HOST, value);
+    }
+    let mut req = Request::new(full(replay.body));
+    *req.method_mut() = method;
+    *req.uri_mut() = uri;
+    *req.headers_mut() = headers;
+    let id = ctx.next_id();
+    let ctx = Arc::clone(ctx);
+    tokio::spawn(async move {
+        let response = exchange(req, &ctx, Ok(()), id).await;
+        // Nadie lee esta respuesta: se consume para que su captura termine.
+        drain(response.into_body()).await;
+    });
+    Ok(id)
+}
+
 async fn send_upstream(
-    mut req: Request<Recorder<Incoming>>,
+    mut req: Request<Recorder<ProxyBody>>,
     ctx: &Context,
 ) -> Result<Response<Incoming>, Reject> {
     strip_hop_by_hop(req.headers_mut());
@@ -447,13 +824,19 @@ async fn intercept(req: Request<Incoming>, ctx: Arc<Context>, target: Target, lo
         Ok(Err(e)) => return handshake_failed(describe_client_tls_error(&e)),
         Err(_) => return handshake_failed("el cliente no completó el handshake TLS".to_owned()),
     };
-    log.emit(&ctx, StatusCode::OK, None, true);
+    let opened = log.started.elapsed();
+    log.emit_at(&ctx, opened, None);
 
     let base = target.base_url();
     let tracker = ctx.tracker().clone();
+    // Cuántos requests viajaron por el túnel: cero con handshake OK suele ser certificate pinning.
+    let requests = Arc::new(AtomicU64::new(0));
+    let counter = Arc::clone(&requests);
+    let inner_ctx = Arc::clone(&ctx);
     let service = service_fn(move |req| {
-        let ctx = Arc::clone(&ctx);
+        let ctx = Arc::clone(&inner_ctx);
         let base = base.clone();
+        counter.fetch_add(1, Ordering::Relaxed);
         async move { Ok::<_, Infallible>(decrypted(req, &ctx, &base).await) }
     });
     let conn = http1::Builder::new()
@@ -463,7 +846,12 @@ async fn intercept(req: Request<Incoming>, ctx: Arc<Context>, target: Target, lo
     tokio::pin!(conn);
     // Los errores de la conexión descifrada (cliente que corta) no afectan al resto.
     tokio::select! {
-        _ = conn.as_mut() => return,
+        _ = conn.as_mut() => {
+            if requests.load(Ordering::Relaxed) == 0 {
+                log.emit_at(&ctx, opened, Some(NO_REQUESTS_HINT.to_owned()));
+            }
+            return;
+        }
         () = tracker.reached(Phase::Draining) => conn.as_mut().graceful_shutdown(),
     }
     tokio::select! {
@@ -484,7 +872,7 @@ async fn decrypted(mut req: Request<Incoming>, ctx: &Context, base: &str) -> Res
                 "ProxyRR: URL inválida en el túnel.",
             )
         });
-    exchange(req, ctx, check).await
+    exchange(req.map(BodyExt::boxed), ctx, check, ctx.next_id()).await
 }
 
 /// Túnel opaco sobre un cliente ya upgradeado (con los bytes que se hayan leído al inspeccionar).
@@ -658,22 +1046,16 @@ fn local_response<B>(req: &Request<B>, ctx: &Context) -> Option<Response<ProxyBo
         path,
         user_agent,
     });
-    let mut response = Response::new(
-        Full::new(local.body)
-            .map_err(|never| match never {})
-            .boxed(),
-    );
+    Some(local_to_response(local))
+}
+
+/// Respuesta armada por el proxy (sitio local, Map Local, Block). `Content-Length` y
+/// `Transfer-Encoding` se ignoran: hyper los calcula del body.
+fn local_to_response(local: LocalResponse) -> Response<ProxyBody> {
+    let mut response = Response::new(full(local.body));
     *response.status_mut() = StatusCode::from_u16(local.status).unwrap_or(StatusCode::OK);
-    let headers = response.headers_mut();
-    for (name, value) in &local.headers {
-        if let (Ok(name), Ok(value)) = (
-            hyper::header::HeaderName::from_bytes(name.as_bytes()),
-            HeaderValue::from_str(value),
-        ) {
-            headers.append(name, value);
-        }
-    }
-    Some(response)
+    *response.headers_mut() = rebuild_headers(&local.headers);
+    response
 }
 
 #[cfg(test)]

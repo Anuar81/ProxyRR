@@ -61,3 +61,19 @@ en una rama (pedido del usuario: un solo PR para F3).
 
 Scripting JS, Map Local de directorio, Allow List, throttling, templates de mensajes, breakpoints por la
 API y WebSocket/HTTP/2 (F5). Quedan en el roadmap y en `PROXYMAN-COMPARISON.md`.
+
+
+## Agregado al cierre (prueba en un teléfono real)
+
+Salió de probar con un teléfono físico y una app propia; va en la misma rama para un único PR.
+
+- Guías de teléfono por Wi-Fi: si el proxy escucha en loopback, aviso y botón "Escuchar en la red".
+- Menú contextual que no se cerraba (`[hidden]` perdía contra `display: flex`); `Esc` lo cierra.
+- `CONNECT` descifrados ocultos por defecto (interruptor **CONNECT**); su detalle lista los requests a
+  ese host. Un túnel descifrado que se cierra sin requests avisa "posible certificate pinning" y queda
+  visible.
+- Mensaje de "el cliente no confía en la CA" válido también para teléfonos.
+- Copiar como cURL para PowerShell (TD-012, parcial).
+- Breakpoints por la API: `GET /api/v1/breakpoints`, `POST /api/v1/breakpoints/{key}` y avisos
+  `paused`/`resolved` por el WebSocket (TD-011).
+- Licencia PolyForm Small Business confirmada con el texto completo (TD-005) y README de uso.

@@ -386,14 +386,19 @@ impl Backend {
         self.engine.replay(request.into_replay()).await
     }
 
-    /// Comando `curl` de un flujo.
+    /// Comando `curl` de un flujo, para bash (`"posix"`) o PowerShell (`"powershell"`).
     ///
     /// # Errors
     /// Túnel, flujo que ya no está o body recortado.
-    pub fn curl(&self, id: u64) -> Result<String, String> {
+    pub fn curl(&self, id: u64, shell: &str) -> Result<String, String> {
+        let shell = if shell.eq_ignore_ascii_case("powershell") {
+            tools::CurlShell::PowerShell
+        } else {
+            tools::CurlShell::Posix
+        };
         self.engine
             .replay_request(id)
-            .map(|r| tools::curl_command(&r))
+            .map(|r| tools::curl_command_for(&r, shell))
     }
 
     /// Estado del proxy y del store.

@@ -350,18 +350,60 @@ fn quote(text: &str) -> String {
     format!("'{}'", text.replace('\'', r"'\''"))
 }
 
+/// Shell para el que se arma el comando `curl`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CurlShell {
+    /// bash / zsh / Git Bash: comillas simples POSIX y `\` para seguir la línea.
+    Posix,
+    /// PowerShell (5 y 7): `curl.exe` (no el alias de `Invoke-WebRequest`), comillas simples
+    /// con `''` como escape y `` ` `` para seguir la línea.
+    PowerShell,
+}
+
+impl CurlShell {
+    fn quote(self, text: &str) -> String {
+        match self {
+            Self::Posix => quote(text),
+            Self::PowerShell => format!("'{}'", text.replace('\'', "''")),
+        }
+    }
+
+    fn program(self) -> &'static str {
+        match self {
+            Self::Posix => "curl",
+            Self::PowerShell => "curl.exe",
+        }
+    }
+
+    fn next_line(self) -> &'static str {
+        match self {
+            Self::Posix => " \\\n  ",
+            Self::PowerShell => " `\n  ",
+        }
+    }
+}
+
 /// Comando `curl` (bash/zsh) que reproduce un request.
+#[cfg(test)]
 #[must_use]
 pub fn curl_command(request: &Replay) -> String {
-    let mut out = String::from("curl");
+    curl_command_for(request, CurlShell::Posix)
+}
+
+/// Comando `curl` que reproduce un request, en la sintaxis de `shell`.
+#[must_use]
+pub fn curl_command_for(request: &Replay, shell: CurlShell) -> String {
+    let q = |text: &str| shell.quote(text);
+    let nl = shell.next_line();
+    let mut out = String::from(shell.program());
     match request.method.to_ascii_uppercase().as_str() {
         "GET" => {}
         "HEAD" => out.push_str(" --head"),
         method => {
-            let _ = write!(out, " -X {}", quote(method));
+            let _ = write!(out, " -X {}", q(method));
         }
     }
-    let _ = write!(out, " {}", quote(&request.url));
+    let _ = write!(out, " {}", q(&request.url));
     let url_host = origin(&request.url)
         .split_once("://")
         .map_or("", |(_, h)| h);
@@ -375,20 +417,20 @@ pub fn curl_command(request: &Replay) -> String {
         if name.eq_ignore_ascii_case("accept-encoding") {
             compressed = true;
         }
-        let _ = write!(out, " \\\n  -H {}", quote(&format!("{name}: {value}")));
+        let _ = write!(out, "{nl}-H {}", q(&format!("{name}: {value}")));
     }
     if compressed {
-        out.push_str(" \\\n  --compressed");
+        let _ = write!(out, "{nl}--compressed");
     }
     if !request.body.is_empty() {
         match std::str::from_utf8(&request.body) {
             Ok(text) => {
-                let _ = write!(out, " \\\n  --data-binary {}", quote(text));
+                let _ = write!(out, "{nl}--data-binary {}", q(text));
             }
             Err(_) => {
                 let _ = write!(
                     out,
-                    " \\\n  --data-binary @body.bin  # body binario de {} bytes: base64 {}",
+                    "{nl}--data-binary '@body.bin'  # body binario de {} bytes: base64 {}",
                     request.body.len(),
                     STANDARD.encode(&request.body)
                 );
@@ -607,5 +649,19 @@ mod tests {
         let cmd = curl_command(&head);
         assert!(cmd.starts_with("curl --head"), "{cmd}");
         assert!(cmd.contains("binario de 2 bytes"), "{cmd}");
+    }
+
+    #[test]
+    fn curl_for_powershell_uses_curl_exe_and_its_quoting() {
+        let post = Replay {
+            method: "POST".into(),
+            url: "https://x.com/login".into(),
+            headers: vec![("content-type".into(), "application/json".into())],
+            body: Bytes::from_static(b"{\"user\":\"o'neil\"}"),
+        };
+        assert_eq!(
+            curl_command_for(&post, CurlShell::PowerShell),
+            "curl.exe -X 'POST' 'https://x.com/login' `\n  -H 'content-type: application/json' `\n  --data-binary '{\"user\":\"o''neil\"}'"
+        );
     }
 }

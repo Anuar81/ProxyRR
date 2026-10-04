@@ -178,8 +178,8 @@ async fn compose_send(state: AppState<'_>, request: ComposeDto) -> Result<u64, S
 }
 
 #[tauri::command]
-fn copy_curl(state: AppState<'_>, id: u64) -> Result<String, String> {
-    state.curl(id)
+fn copy_curl(state: AppState<'_>, id: u64, shell: Option<String>) -> Result<String, String> {
+    state.curl(id, shell.as_deref().unwrap_or("posix"))
 }
 
 /// Aviso de breakpoints para la ventana.

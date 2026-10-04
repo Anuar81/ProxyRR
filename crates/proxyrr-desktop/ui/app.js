@@ -575,6 +575,7 @@ function flowCommands(flow) {
     ["Repetir", () => replay(flow.id)],
     ["Editar y repetir…", () => openCompose(flow.id)],
     ["Copiar como cURL", () => copyCurl(flow.id)],
+    ["Copiar como cURL (PowerShell)", () => copyCurl(flow.id, "powershell")],
     null,
     ["Map Local…", draft("map_local")],
     ["Map Remote…", draft("map_remote")],
@@ -622,10 +623,10 @@ async function replay(id) {
   }
 }
 
-async function copyCurl(id) {
+async function copyCurl(id, shell = "posix") {
   try {
-    await copy(await call("copy_curl", { id }));
-    showInfo("Comando cURL copiado (bash/zsh)");
+    await copy(await call("copy_curl", { id, shell }));
+    showInfo(shell === "powershell" ? "Comando cURL copiado (PowerShell)" : "Comando cURL copiado (bash/zsh)");
   } catch {
     // mostrado
   }

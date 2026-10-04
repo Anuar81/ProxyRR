@@ -6,9 +6,9 @@ use std::fmt::Write as _;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use bytes::Bytes;
-use proxyrr_core::{Headers, Paused, Replay, Stage};
-use proxyrr_rules::{Action, MapLocal, MapRemote, PausedFlow, Rule};
-use proxyrr_store::{Decoded, HttpRecord, decode_body};
+use proxyrr_core::{Headers, Replay};
+use proxyrr_rules::{Action, MapLocal, MapRemote, Rule};
+use proxyrr_store::HttpRecord;
 use serde::{Deserialize, Serialize};
 
 /// Headers que no tiene sentido copiar a un mock ni a un request nuevo: los recalcula el proxy o son
@@ -36,31 +36,8 @@ fn keep_header(name: &str, decoded: bool) -> bool {
     !(is_connection_header(name) || decoded && name.eq_ignore_ascii_case("content-encoding"))
 }
 
-fn header<'a>(headers: &'a Headers, name: &str) -> Option<&'a str> {
-    headers
-        .iter()
-        .find(|(n, _)| n.eq_ignore_ascii_case(name))
-        .map(|(_, v)| v.as_str())
-}
-
-/// Body como texto editable, decodificado si venía comprimido. `None` si es binario.
-fn editable_text(headers: &Headers, data: &[u8]) -> (Option<String>, bool) {
-    let (bytes, decoded): (Vec<u8>, bool) =
-        match decode_body(header(headers, "content-encoding"), data) {
-            Decoded::Identity => (data.to_vec(), false),
-            Decoded::Decoded {
-                data,
-                complete: true,
-            } => (data, true),
-            Decoded::Decoded { .. } | Decoded::Unsupported(_) => return (None, false),
-        };
-    match String::from_utf8(bytes) {
-        Ok(text) if !text.chars().any(|c| c.is_control() && !c.is_whitespace()) => {
-            (Some(text), decoded)
-        }
-        _ => (None, false),
-    }
-}
+use proxyrr_api::breakpoint::editable_text;
+pub use proxyrr_api::breakpoint::{EditedDto, PausedDto};
 
 /// URL sin query.
 fn base_url(url: &str) -> &str {
@@ -167,128 +144,6 @@ pub fn draft_rule(record: &HttpRecord, kind: DraftKind) -> Rule {
         url,
         regex: false,
         action,
-    }
-}
-
-/// Lado en pausa, para la vista.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum StageDto {
-    /// Request.
-    Request,
-    /// Respuesta.
-    Response,
-}
-
-/// Flujo en pausa para la vista. Si el body venía comprimido se muestra decodificado y sin
-/// `Content-Encoding`: si se edita, sale sin comprimir.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct PausedDto {
-    /// Clave para resolverlo.
-    pub key: u64,
-    /// Lado.
-    pub stage: StageDto,
-    /// Id del flujo.
-    pub id: u64,
-    /// Método.
-    pub method: String,
-    /// URL.
-    pub url: String,
-    /// Status (respuesta).
-    pub status: Option<u16>,
-    /// Headers.
-    pub headers: Headers,
-    /// Body editable; `None` si es binario (se manda el original).
-    pub body: Option<String>,
-    /// Tamaño del body original.
-    pub size: usize,
-    /// Aviso para la vista.
-    pub note: Option<String>,
-}
-
-impl From<&PausedFlow> for PausedDto {
-    fn from(flow: &PausedFlow) -> Self {
-        let message = &flow.message;
-        let (body, decoded) = editable_text(&message.headers, &message.body);
-        let headers = message
-            .headers
-            .iter()
-            .filter(|(n, _)| !(decoded && n.eq_ignore_ascii_case("content-encoding")))
-            .cloned()
-            .collect();
-        let note = if body.is_none() && !message.body.is_empty() {
-            Some(format!(
-                "Body binario de {} bytes: se manda el original.",
-                message.body.len()
-            ))
-        } else if decoded {
-            header(&message.headers, "content-encoding").map(|enc| {
-                format!(
-                    "El body venía con {enc}: se muestra decodificado y se manda sin comprimir."
-                )
-            })
-        } else {
-            None
-        };
-        Self {
-            key: flow.key,
-            stage: match flow.stage {
-                Stage::Request => StageDto::Request,
-                Stage::Response => StageDto::Response,
-            },
-            id: message.id,
-            method: message.method.clone(),
-            url: message.url.clone(),
-            status: message.status,
-            headers,
-            body,
-            size: message.body.len(),
-            note,
-        }
-    }
-}
-
-/// Mensaje editado en la vista.
-#[derive(Debug, Clone, Deserialize)]
-pub struct EditedDto {
-    /// Método (request).
-    #[serde(default)]
-    pub method: Option<String>,
-    /// URL (request).
-    #[serde(default)]
-    pub url: Option<String>,
-    /// Status (respuesta).
-    #[serde(default)]
-    pub status: Option<u16>,
-    /// Headers.
-    pub headers: Headers,
-    /// Body; `None`: el original (con su `Content-Encoding`).
-    #[serde(default)]
-    pub body: Option<String>,
-}
-
-/// Aplica la edición de la vista sobre el mensaje original.
-#[must_use]
-pub fn apply_edit(original: &Paused, edited: EditedDto) -> Paused {
-    let mut headers = edited.headers;
-    let body = if let Some(text) = edited.body {
-        Bytes::from(text)
-    } else {
-        // Body original: vuelve con su encoding (la vista lo había ocultado al decodificar).
-        if let Some(enc) = header(&original.headers, "content-encoding")
-            && header(&headers, "content-encoding").is_none()
-        {
-            headers.push(("content-encoding".into(), enc.to_owned()));
-        }
-        original.body.clone()
-    };
-    Paused {
-        id: original.id,
-        method: edited.method.unwrap_or_else(|| original.method.clone()),
-        url: edited.url.unwrap_or_else(|| original.url.clone()),
-        status: edited.status.or(original.status),
-        headers,
-        body,
     }
 }
 
@@ -445,7 +300,9 @@ mod tests {
     use std::io::Write as _;
     use std::time::{Duration, SystemTime};
 
-    use proxyrr_core::{CapturedBody, HttpBodies, HttpFlow};
+    use proxyrr_api::breakpoint::apply_edit;
+    use proxyrr_core::{CapturedBody, HttpBodies, HttpFlow, Paused, Stage};
+    use proxyrr_rules::PausedFlow;
 
     use super::*;
 

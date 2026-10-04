@@ -12,7 +12,7 @@ use proxyrr_api::{
     StatusDto,
 };
 use proxyrr_cert::{CA_CERT_FILE, CertificateAuthority};
-use proxyrr_core::{Headers, LocalSite, ProxyConfig, Verdict};
+use proxyrr_core::{Headers, LocalSite, ProxyConfig};
 use proxyrr_devices::guide::{self, GuideContext, Target};
 use proxyrr_devices::trust::{self, LinuxTools, Os, Runner, SystemRunner};
 use proxyrr_devices::{CaFiles, CertSite, lan_ip, qr_svg};
@@ -337,27 +337,11 @@ impl Backend {
         action: &str,
         edited: Option<EditedDto>,
     ) -> Result<(), String> {
-        let breakpoints = self.engine.rules().breakpoints();
-        let original = breakpoints
-            .pending()
-            .into_iter()
-            .find(|p| p.key == key)
-            .ok_or("ese flujo ya no está en pausa (venció o el cliente cortó)")?
-            .message;
-        let verdict = match action {
-            "continue" => Verdict::Continue(original),
-            "abort" => Verdict::Abort,
-            "execute" => Verdict::Continue(tools::apply_edit(
-                &original,
-                edited.ok_or("falta el mensaje editado")?,
-            )),
-            other => return Err(format!("acción desconocida: {other}")),
+        let decision = proxyrr_api::breakpoint::ResolveDto {
+            action: action.to_owned(),
+            edited,
         };
-        if breakpoints.resolve(key, verdict) {
-            Ok(())
-        } else {
-            Err("ese flujo ya no está en pausa (venció o el cliente cortó)".into())
-        }
+        proxyrr_api::breakpoint::resolve(self.engine.rules().breakpoints(), key, decision)
     }
 
     /// Repite un flujo tal cual. Devuelve el id del flujo nuevo.

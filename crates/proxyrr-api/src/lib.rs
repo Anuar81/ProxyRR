@@ -11,6 +11,7 @@
 //! `POST /flows/{id}/replay`, `GET|PUT /rules`, `GET /har`,
 //! `GET /events` (WebSocket; acepta `?token=`).
 
+pub mod breakpoint;
 mod dto;
 mod engine;
 mod har;

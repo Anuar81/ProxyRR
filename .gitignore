@@ -2,8 +2,9 @@
 /target/
 **/*.rs.bk
 
-# Kiro Crew dashboard (local)
-.kiro/
+# Kiro Crew / kiro-cli: estado local fuera del repo; las steering del proyecto sí se versionan
+.kiro/*
+!.kiro/steering/
 
 # OS / editores
 .DS_Store

@@ -128,9 +128,19 @@ navegar, ver la lista en vivo, abrir un flujo (headers, JSON formateado, imagen)
 `status:2xx`, interruptor CONNECT, clic derecho → Map Local editado y guardado → recargar muestra el
 mock; Breakpoint → editar y Ejecutar; Exportar HAR deja un archivo en Descargas.
 B6 ⬜ App: Certificado… → Este equipo muestra el estado correcto (instalada) y los botones funcionan.
-B7 ⬜ Simulador de iOS (si hay Xcode): con un simulador abierto, Certificado… → Simulador de iOS →
+B7 ✅ Simulador de iOS (si hay Xcode): con un simulador abierto, Certificado… → Simulador de iOS →
 "Instalar en el simulador abierto" (o `proxyrr setup ios-simulator --install`); Safari del simulador
 con el proxy del sistema ve HTTPS descifrado.
+- macOS: Xcode no traía runtimes; se bajó iOS 27.0 (24A434). iPhone 18 Pro booteado con `simctl`.
+  Probado por CLI (el botón de la app queda para B5/B6). `setup ios-simulator --install` corrió
+  `xcrun simctl keychain booted add-root-cert …/ca.pem` → "Listo". Con el proxy del sistema en
+  `127.0.0.1:9090` y `start --mitm --bypass '*.apple.com' --bypass '*.icloud.com'`, Safari del
+  simulador abrió las páginas sin aviso de certificado (`simctl openurl`) y el proxy las vio descifradas:
+  ```
+  #42    GET     200  https://example.com/  221 ms
+  #58    GET     200  https://httpbin.org/json  958 ms  429 B
+  ```
+  Proxies del sistema apagados al terminar (`Enabled: No` en ambos).
 B8 ⬜ Android (si hay SDK y emulador "Google APIs"): Certificado… → Android con un clic → Configurar;
 una app del emulador se ve descifrada; al cerrar la app el emulador sigue con internet.
 B9 🔐 ⬜ `proxyrr ca uninstall` → `ca status` dice "no instalada" y desapareció del llavero. No borró

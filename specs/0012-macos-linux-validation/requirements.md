@@ -127,6 +127,14 @@ B5 ⬜ App de escritorio: `cargo run -p proxyrr-desktop` abre la ventana; Inicia
 navegar, ver la lista en vivo, abrir un flujo (headers, JSON formateado, imagen), filtro
 `status:2xx`, interruptor CONNECT, clic derecho → Map Local editado y guardado → recargar muestra el
 mock; Breakpoint → editar y Ejecutar; Exportar HAR deja un archivo en Descargas.
+- macOS (parcial, manejado con Computer Use por accesibilidad): la ventana "ProxyRR 0.1.0" abre;
+  Iniciar con "Descifrar HTTPS" → "Escuchando en 127.0.0.1:9090 · HTTPS descifrado". Con 5 requests por
+  `curl -x` la lista se llenó en vivo ("5 de 9 flujos", los 4 CONNECT ocultos). Detalle del JSON:
+  7 headers y body formateado; el PNG se ve como imagen ("imagen del body"). `status:2xx` → "4 de 9"
+  (sale el 404). Interruptor CONNECT → "9 flujos" con los `host:443`, y al apagarlo vuelve a 5.
+  Ojo al probar: "Descifrar HTTPS" ya viene marcado; un clic lo apaga y arranca en túnel (no es bug).
+  ⬜ Pendiente: clic derecho → Map Local editado y guardado → recargar, Breakpoint → editar y Ejecutar,
+  Exportar HAR. El clic derecho sintético no abrió el menú; hay que probarlo con el mouse real.
 B6 ⬜ App: Certificado… → Este equipo muestra el estado correcto (instalada) y los botones funcionan.
 B7 ✅ Simulador de iOS (si hay Xcode): con un simulador abierto, Certificado… → Simulador de iOS →
 "Instalar en el simulador abierto" (o `proxyrr setup ios-simulator --install`); Safari del simulador

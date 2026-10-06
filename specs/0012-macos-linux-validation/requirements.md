@@ -149,8 +149,19 @@ con el proxy del sistema ve HTTPS descifrado.
   #58    GET     200  https://httpbin.org/json  958 ms  429 B
   ```
   Proxies del sistema apagados al terminar (`Enabled: No` en ambos).
-B8 ⬜ Android (si hay SDK y emulador "Google APIs"): Certificado… → Android con un clic → Configurar;
+B8 ✅ Android (si hay SDK y emulador "Google APIs"): Certificado… → Android con un clic → Configurar;
 una app del emulador se ve descifrada; al cerrar la app el emulador sigue con internet.
+- macOS: Android Studio con AVD `Medium_Phone`, Android 14 (API 34, `google_apis`, arm64, sin Play
+  Store). Configurar desde la app (clic del usuario) dejó, verificado por `adb`:
+  ```
+  http_proxy=10.0.2.2:9090
+  /system/etc/security/cacerts/4964abf2.0         (tmpfs, 135 certificados)
+  /apex/com.android.conscrypt/cacerts/4964abf2.0  (tmpfs, 135 certificados)
+  ```
+  Chrome del emulador abrió `https://httpbin.org/json` con candado y sin aviso; en la app el flujo se
+  vio descifrado (`BODY · 429 B · APPLICATION/JSON`, JSON formateado). Para saltear la bienvenida de
+  Chrome se usaron flags de depuración (`--disable-fre`), que no afectan al proxy.
+  Al cerrar la app: `http_proxy=:0` y el emulador siguió navegando normal.
 B9 🔐 ⬜ `proxyrr ca uninstall` → `ca status` dice "no instalada" y desapareció del llavero. No borró
 ninguna otra CA.
 

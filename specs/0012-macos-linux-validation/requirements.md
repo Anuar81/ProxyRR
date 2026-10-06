@@ -86,16 +86,43 @@ A6 ✅ Túnel sin descifrar: `curl -x http://127.0.0.1:9090 https://example.com/
 
 ## B. macOS
 
-B1 🔐 ⬜ `proxyrr ca install`: macOS pide la contraseña o Touch ID. Después `ca status` → instalada.
+B1 🔐 ✅ `proxyrr ca install`: macOS pide la contraseña o Touch ID. Después `ca status` → instalada.
 En Acceso a Llaveros → inicio de sesión aparece "ProxyRR CA (…)" con "Confiar siempre" para SSL.
-B2 ⬜ Descifrado con el almacén del sistema: `proxyrr start --mitm` y
+- macOS: pidió autenticación y terminó con `Listo: ProxyRR CA (f950a201) es de confianza en este equipo.`
+  ```
+  $ ca status
+    [x] llavero de inicio de sesión
+    [x] confianza SSL
+  $ security find-certificate -a -c "ProxyRR CA" -Z ~/Library/Keychains/login.keychain-db
+    SHA-256 hash: A51D7D7C…ED94A6BF   "labl"="ProxyRR CA (f950a201)"
+  $ security dump-trust-settings
+    Cert 0: ProxyRR CA (f950a201) — Trust Setting 0: Policy OID: SSL
+  ```
+
+B2 ✅ Descifrado con el almacén del sistema: `proxyrr start --mitm` y
 `curl -x http://127.0.0.1:9090 https://example.com/ -o /dev/null -w '%{http_code}\n'` → `200` **sin**
 `-k` (el `curl` de macOS usa el llavero). La terminal muestra `https://example.com/`.
-B3 ⬜ Safari o Chrome con el proxy del sistema (Ajustes del Sistema → Red → Detalles → Proxies → Web y
+- macOS: `200`; `curl -v`: `issuer: CN=ProxyRR CA (f950a201); O=ProxyRR` y `SSL certificate verify ok.`
+  En el proxy: `#2     GET     200  https://example.com/  231 ms`.
+
+B3 ✅ Safari o Chrome con el proxy del sistema (Ajustes del Sistema → Red → Detalles → Proxies → Web y
 Web segura: `127.0.0.1:9090`): un sitio HTTPS carga sin aviso de certificado y se ve descifrado.
 **Al terminar apagá los proxies del sistema.**
-B4 ⬜ Firefox (si está): sin configurar, avisa de certificado; `ca install` imprimió cómo activar
+- macOS: proxies Web y Web segura de Wi-Fi puestos con `networksetup`. Safari (`https://www.wikipedia.org/`)
+  y Microsoft Edge, como caso Chromium (`https://httpbin.org/get`), cargaron sin aviso y se ven descifrados:
+  ```
+  #30    GET     200  https://www.wikipedia.org/  330 ms  22.2 KB
+  #51    GET     200  https://www.wikipedia.org/portal/wikipedia.org/assets/img/Wikipedia-logo-v2@2x.png  139 ms  36.6 KB
+  #158   GET     200  https://httpbin.org/get  704 ms  999 B
+  ```
+  Observación (no es falla): los servicios del sistema con pinning (`gateway.icloud.com`, `wps.apple.com`,
+  `configuration.apple.com`, `p192-quota.icloud.com`) dieron 53 `falló el handshake TLS con el cliente`
+  en ~1 min. Con `--bypass '*.icloud.com' --bypass '*.apple.com'` pasan por túnel y quedan 0 fallos.
+  Proxies del sistema apagados al terminar (`Enabled: No` en ambos).
+B4 ➖ Firefox (si está): sin configurar, avisa de certificado; `ca install` imprimió cómo activar
 `security.enterprise_roots.enabled`. Con eso, carga sin aviso.
+- macOS: no aplica, Firefox no está instalado (decisión del usuario). Queda en
+  [TD-013](../TECH-DEBT.md#td-013--firefox-no-se-probó-nunca-de-verdad) con el procedimiento.
 B5 ⬜ App de escritorio: `cargo run -p proxyrr-desktop` abre la ventana; Iniciar con "Descifrar HTTPS",
 navegar, ver la lista en vivo, abrir un flujo (headers, JSON formateado, imagen), filtro
 `status:2xx`, interruptor CONNECT, clic derecho → Map Local editado y guardado → recargar muestra el

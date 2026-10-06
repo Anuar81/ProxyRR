@@ -27,25 +27,62 @@ eso anda en una Mac y en un Linux de verdad.
 Datos de la máquina (completar): sistema y versión, arquitectura (`uname -m`), `rustc --version`,
 navegadores instalados.
 
+- macOS: macOS 27.0 (26A428), `arm64`, Xcode instalado.
+  `rustc 1.98.1 (48a229cea 2026-09-01)` (de `rust-toolchain.toml`), node v26.10.0, cargo-deny 0.20.2.
+  Navegadores: Safari, Microsoft Edge (Chromium). Sin Firefox ni Chrome.
+
 ---
 
 ## A. Común (macOS y Linux)
 
-A1 ⬜ Dependencias de compilación instaladas (ver README → Requisitos de desarrollo).
-A2 ⬜ Verificación completa en verde:
+A1 ✅ Dependencias de compilación instaladas (ver README → Requisitos de desarrollo).
+- macOS: rustup (perfil `minimal`; el toolchain y los componentes `clippy`/`rustfmt` los baja solo
+  `rust-toolchain.toml`), `brew install node`, `cargo install cargo-deny --locked`. Xcode ya estaba.
+
+A2 ✅ Verificación completa en verde:
 ```sh
 cargo fmt --check && cargo clippy --workspace --all-targets -- -D warnings \
   && cargo test --workspace && cargo deny check \
   && node --test crates/proxyrr-desktop/tests-ui/lib.test.mjs
 ```
-A3 ⬜ `cargo run -p proxyrr-cli -- ca info` crea la CA y muestra nombre y huella; `ca path` muestra el
+- macOS: fmt y clippy sin salida; `cargo test`: 225 passed, 0 failed; `cargo deny`:
+  `advisories ok, bans ok, licenses ok, sources ok` (solo avisos `warning[duplicate]`, no fallan);
+  `node --test`: 11 pass, 0 fail.
+
+A3 ✅ `cargo run -p proxyrr-cli -- ca info` crea la CA y muestra nombre y huella; `ca path` muestra el
 directorio de datos (`~/Library/Application Support/ProxyRR` o `~/.local/share/proxyrr`) y
 `ca.key.pem` tiene permisos `600` (`ls -l`, **sin abrir el archivo**).
-A4 ⬜ `ca status` dice "no instalada" y `ca install --dry-run` muestra el plan sin ejecutar nada.
-A5 ⬜ Proxy HTTP sin descifrar: `proxyrr start` y en otra terminal
+- macOS:
+  ```
+  Subject:        CN=ProxyRR CA (f950a201), O=ProxyRR
+  Válida desde:   2026-10-05
+  Válida hasta:   2036-10-03
+  SHA-256:        A5:1D:7D:7C:…:ED:94:A6:BF
+  Android:        4964abf2.0
+  $ ca path → ~/Library/Application Support/ProxyRR
+  -rw-------@ 1 … ca.key.pem
+  -rw-r--r--@ 1 … ca.pem
+  ```
+
+A4 ✅ `ca status` dice "no instalada" y `ca install --dry-run` muestra el plan sin ejecutar nada.
+- macOS:
+  ```
+  [ ] llavero de inicio de sesión
+  [ ] confianza SSL
+  No está instalada: `proxyrr ca install`.
+  ---
+  Agregar la CA al llavero de inicio de sesión con confianza SSL
+    $ security add-trusted-cert -r trustRoot -p ssl -k ~/Library/Keychains/login.keychain-db "~/Library/Application Support/ProxyRR/ca.pem"
+  --dry-run: no se ejecutó nada.
+  ```
+
+A5 ✅ Proxy HTTP sin descifrar: `proxyrr start` y en otra terminal
 `curl -x http://127.0.0.1:9090 http://example.com/ -o /dev/null -w '%{http_code}\n'` → `200`, y el
 request aparece en la terminal del proxy.
-A6 ⬜ Túnel sin descifrar: `curl -x http://127.0.0.1:9090 https://example.com/ -o /dev/null -w '%{http_code}\n'` → `200`.
+- macOS: `200`; en el proxy: `#1     GET     200  http://example.com/  231 ms`.
+
+A6 ✅ Túnel sin descifrar: `curl -x http://127.0.0.1:9090 https://example.com/ -o /dev/null -w '%{http_code}\n'` → `200`.
+- macOS: `200`; en el proxy: `#2     CONNECT 200  example.com:443  24 ms  túnel sin descifrar`.
 
 ## B. macOS
 

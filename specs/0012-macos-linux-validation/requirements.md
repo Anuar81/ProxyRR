@@ -123,7 +123,7 @@ B4 ➖ Firefox (si está): sin configurar, avisa de certificado; `ca install` im
 `security.enterprise_roots.enabled`. Con eso, carga sin aviso.
 - macOS: no aplica, Firefox no está instalado (decisión del usuario). Queda en
   [TD-013](../TECH-DEBT.md#td-013--firefox-no-se-probó-nunca-de-verdad) con el procedimiento.
-B5 ⬜ App de escritorio: `cargo run -p proxyrr-desktop` abre la ventana; Iniciar con "Descifrar HTTPS",
+B5 ✅ App de escritorio: `cargo run -p proxyrr-desktop` abre la ventana; Iniciar con "Descifrar HTTPS",
 navegar, ver la lista en vivo, abrir un flujo (headers, JSON formateado, imagen), filtro
 `status:2xx`, interruptor CONNECT, clic derecho → Map Local editado y guardado → recargar muestra el
 mock; Breakpoint → editar y Ejecutar; Exportar HAR deja un archivo en Descargas.
@@ -133,9 +133,29 @@ mock; Breakpoint → editar y Ejecutar; Exportar HAR deja un archivo en Descarga
   7 headers y body formateado; el PNG se ve como imagen ("imagen del body"). `status:2xx` → "4 de 9"
   (sale el 404). Interruptor CONNECT → "9 flujos" con los `host:443`, y al apagarlo vuelve a 5.
   Ojo al probar: "Descifrar HTTPS" ya viene marcado; un clic lo apaga y arranca en túnel (no es bug).
-  ⬜ Pendiente: clic derecho → Map Local editado y guardado → recargar, Breakpoint → editar y Ejecutar,
-  Exportar HAR. El clic derecho sintético no abrió el menú; hay que probarlo con el mouse real.
-B6 ⬜ App: Certificado… → Este equipo muestra el estado correcto (instalada) y los botones funcionan.
+- macOS (resto, con el mouse del usuario):
+  - Clic derecho sobre `GET https://httpbin.org/json` → Map Local, `"Yours Truly"` → `"Mock ProxyRR"`,
+    guardado. Repetir el request por `curl -x` devolvió el mock (`content-length: 430`, `date` del
+    momento en que se guardó). Breakpoint sobre `/get`: frenó request y response; el request editado
+    llegó al origen (`"url": "https://httpbin.org/get?origen=editado"`, body `hola` → el proxy
+    recalculó `Content-Length: 4`); "Continuar sin cambios" dejó pasar la response tal cual.
+  - Exportar HAR guarda directo, sin diálogo, en `~/Downloads/proxyrr-<n>.har`: HAR 1.2, creador
+    `ProxyRR`, 4 entradas (las 2 de `/json`, original y mock, y las 2 de `/get`).
+  - Reglas borradas desde Reglas…; después `/json` volvió a dar `"Yours Truly"` y `/get` no se frenó.
+  - Arreglo: la CSP no autorizaba el IPC de Tauri en macOS (`Refused to connect to ipc://localhost/…`
+    en la consola, Tauri caía a `postMessage`). Se agregó `connect-src ipc: http://ipc.localhost`.
+  - Falsa alarma que costó tiempo: el clic derecho "no andaba" porque la app había arrancado en túnel
+    (checkbox desmarcado): solo había `CONNECT httpbin.org:443`, y en un túnel el menú no abre ni avisa.
+    Quedó en [TD-014](../TECH-DEBT.md#td-014--el-menú-contextual-de-un-túnel-no-dice-nada). Para
+    confirmar que descifra, mirar el emisor (`curl -v` → `issuer: CN=ProxyRR CA …`), no solo que
+    verifique: el certificado real también verifica.
+  - Observación: el flujo editado en el breakpoint queda registrado (lista y HAR) con la URL original
+    (`origen=proxyrr`) aunque al origen salió la editada. Va en
+    [TD-015](../TECH-DEBT.md#td-015--el-flujo-editado-en-un-breakpoint-se-registra-con-la-url-original).
+B6 ✅ App: Certificado… → Este equipo muestra el estado correcto (instalada) y los botones funcionan.
+- macOS: "Este equipo" muestra `ProxyRR CA (f950a201)`, el SHA-256 `A5:1D:7D:…:A6:BF` (igual al de
+  `security find-certificate -Z` y `ca status`), "llavero de inicio de sesión", "confianza SSL", el
+  aviso de la clave privada y el botón Desinstalar (no se apretó: la desinstalación es B9).
 B7 ✅ Simulador de iOS (si hay Xcode): con un simulador abierto, Certificado… → Simulador de iOS →
 "Instalar en el simulador abierto" (o `proxyrr setup ios-simulator --install`); Safari del simulador
 con el proxy del sistema ve HTTPS descifrado.

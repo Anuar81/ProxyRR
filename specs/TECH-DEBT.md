@@ -167,3 +167,20 @@ Cada entrada: id, origen, qué pasa, por qué importa, propuesta. Al pagarla: `P
      o `certutil` sobre el perfil, y ver si `ca install`/`ca status` lo cubren.
   5. Al final: quitar el proxy, volver el pref a `false` y `proxyrr ca uninstall`.
   Anotar el resultado por sistema y, si algo falla, arreglarlo o abrir la deuda que corresponda.
+
+## TD-014 — El menú contextual de un túnel no dice nada
+
+- **Origen:** 0012 (B5 en macOS).
+- **Qué pasa:** en un flujo `CONNECT` sin descifrar, `flowCommands` devuelve vacío y el clic derecho no
+  abre nada ni avisa. Con la app arrancada en túnel por error, parece que el clic derecho está roto.
+- **Propuesta:** abrir el menú igual con un ítem deshabilitado ("Túnel sin descifrar: activá «Descifrar
+  HTTPS» para usar reglas"), con su test en `tests-ui`.
+
+## TD-015 — El flujo editado en un breakpoint se registra con la URL original
+
+- **Origen:** 0012 (B5 en macOS).
+- **Qué pasa:** si en un breakpoint se cambia la URL del request, al origen sale la editada, pero la
+  lista y el HAR muestran la original (`?origen=proxyrr` en vez de `?origen=editado`), junto con la
+  response de la editada. Confunde al leer el HAR.
+- **Propuesta:** registrar lo que realmente salió (método/URL/headers editados) y marcar el flujo como
+  editado, guardando la original como dato aparte.

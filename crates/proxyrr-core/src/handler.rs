@@ -338,6 +338,9 @@ struct Notes {
     /// Método y URL con los que salió el request (para mostrarlos al pausar la respuesta).
     method: String,
     url: String,
+    /// El request pasó por un breakpoint: el flujo se registra con el método y la URL que salieron
+    /// (los editados), no con los que llegaron.
+    request_paused: bool,
 }
 
 /// Reenvía un request al origen (ya validado por `check`) aplicando las reglas, captura sus bodies y
@@ -383,6 +386,12 @@ async fn exchange(
             let headers = headers_vec(response.headers());
             (response, headers, Some(reject.message))
         }
+    };
+    // Si un breakpoint lo editó y llegó a salir, se registra lo que salió (TD-015).
+    let (method, url) = if notes.request_paused && !notes.url.is_empty() {
+        (notes.method, notes.url)
+    } else {
+        (method, url)
     };
     // Se emite ANTES de devolver la respuesta: su body no puede terminar antes, así que
     // `HttpBodies` de este id siempre llega después de `Http`.
@@ -431,6 +440,7 @@ async fn forward(
     }
 
     let body = if plan.pause_request {
+        notes.request_paused = true;
         pause_request(&mut parts, body, ctx, tap).await?
     } else {
         Recorder::new(body, Arc::clone(tap), Side::Request)

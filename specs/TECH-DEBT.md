@@ -16,10 +16,13 @@ Cada entrada: id, origen, qué pasa, por qué importa, propuesta. Al pagarla: `P
 | TD-006 | 0004 | pagada en 0010 |
 | TD-007 | 0005 | pagada en 0010 |
 | TD-008 | 0005 | pagada en 0010 |
-| TD-009 | 0006 | abierta (necesita una Mac y un Linux reales) |
+| TD-009 | 0006 | parcial: macOS validado en 0012; falta un Linux real (sección C) |
 | TD-010 | 0006 | pagada en 0010 |
 | TD-011 | 0011 | pagada en 0011 (`GET /api/v1/breakpoints`, `POST /api/v1/breakpoints/{key}`, avisos `paused`/`resolved` por el WebSocket) |
 | TD-012 | 0011 | parcial: cURL para PowerShell hecho en 0011; falta "mantener body original" binario en Compose |
+| TD-013 | 0012 | abierta (Firefox no se probó en ningún sistema) |
+| TD-014 | 0012 | pagada en 0012 (el menú de un túnel explica por qué no hay comandos) |
+| TD-015 | 0012 | pagada en 0012 (se registra el método y la URL que salieron) |
 
 ## TD-001 — Timeout de conexión al origen de 10 s
 
@@ -145,3 +148,46 @@ Cada entrada: id, origen, qué pasa, por qué importa, propuesta. Al pagarla: `P
   PowerShell 5. Compose y "Editar y repetir" muestran el body como texto: si el original es binario, se
   avisa y se manda vacío salvo que el usuario lo complete.
 - **Propuesta:** variantes "cURL (PowerShell)" y "cURL (cmd)"; en Compose, opción "mantener body original".
+
+## TD-013 — Firefox no se probó nunca de verdad
+
+- **Origen:** 0012 (B4 y C4 quedaron "no aplica"; en Windows tampoco se probó).
+- **Qué pasa:** Firefox no usa el almacén del sistema sino su propia base NSS, así que no basta con
+  `proxyrr ca install`. La 0006 (req. 4) pide avisarlo y explicar `security.enterprise_roots.enabled`,
+  pero nadie comprobó en un Firefox real que el aviso salga, que el pref alcance ni qué pasa en Linux
+  con NSS (`certutil`).
+- **Por qué importa:** es el navegador donde más probable es que el usuario vea "conexión no segura"
+  aunque la CA esté instalada.
+- **Propuesta (cómo probarlo):** instalar Firefox (`brew install --cask firefox`,
+  `winget install Mozilla.Firefox` o el paquete de la distro) y, con la CA ya instalada:
+  1. Proxy de Firefox (Ajustes → Configuración de red → Manual: HTTP `127.0.0.1:9090`, "usar también
+     para HTTPS") y `proxyrr start --mitm`.
+  2. Sin tocar nada más, abrir un sitio HTTPS: tiene que avisar de certificado.
+  3. Confirmar que `ca install` imprimió cómo activar `security.enterprise_roots.enabled`. En Windows y
+     macOS: `about:config` → `true`, reiniciar Firefox y el sitio carga sin aviso y se ve descifrado.
+  4. En Linux el pref no aplica: probar importación manual (Ajustes → Certificados → Importar `ca.pem`)
+     o `certutil` sobre el perfil, y ver si `ca install`/`ca status` lo cubren.
+  5. Al final: quitar el proxy, volver el pref a `false` y `proxyrr ca uninstall`.
+  Anotar el resultado por sistema y, si algo falla, arreglarlo o abrir la deuda que corresponda.
+
+## TD-014 — El menú contextual de un túnel no dice nada
+
+- **Origen:** 0012 (B5 en macOS).
+- **Qué pasa:** en un flujo `CONNECT` sin descifrar, `flowCommands` devuelve vacío y el clic derecho no
+  abre nada ni avisa. Con la app arrancada en túnel por error, parece que el clic derecho está roto.
+- **Propuesta:** abrir el menú igual con un ítem deshabilitado ("Túnel sin descifrar: activá «Descifrar
+  HTTPS» para usar reglas"), con su test en `tests-ui`.
+- **Pagada en 0012:** `tunnelMenuNote` (`ui/lib.js`) da el texto según sea túnel opaco, descifrado o
+  fallido, y `openMenu` lo muestra en lugar de quedarse mudo. Test en `tests-ui/lib.test.mjs`.
+
+## TD-015 — El flujo editado en un breakpoint se registra con la URL original
+
+- **Origen:** 0012 (B5 en macOS).
+- **Qué pasa:** si en un breakpoint se cambia la URL del request, al origen sale la editada, pero la
+  lista y el HAR muestran la original (`?origen=proxyrr` en vez de `?origen=editado`), junto con la
+  response de la editada. Confunde al leer el HAR.
+- **Propuesta:** registrar lo que realmente salió (método/URL/headers editados) y marcar el flujo como
+  editado, guardando la original como dato aparte.
+- **Pagada en 0012:** si el request pasó por un breakpoint, `HttpFlow` lleva el método y la URL con los
+  que salió (los headers ya lo hacían). Test: `breakpoint_edits_the_request` en
+  `proxyrr-rules/tests/rules_proxy.rs`, que falla sin el arreglo. No se guarda la URL original aparte.

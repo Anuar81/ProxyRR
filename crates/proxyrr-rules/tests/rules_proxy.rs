@@ -364,6 +364,9 @@ async fn breakpoint_edits_the_request() {
     assert!(reply.body.ends_with("body=user=admin"), "{}", reply.body);
     let flow = next_http(&mut events).await;
     assert_eq!(flow.rules, ["bp"]);
+    // Se registra lo que salió, no lo que llegó (TD-015).
+    assert_eq!(flow.url, format!("http://{origin}/otro"));
+    assert_eq!(flow.method, "POST");
     assert!(flow.request_headers.iter().any(|(n, _)| n == "x-editado"));
     assert_eq!(next_bodies(&mut events).await.request.data, "user=admin");
 }

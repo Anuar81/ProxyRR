@@ -23,6 +23,7 @@ import {
   requestsTo,
   ruleSummary,
   statusClass,
+  tunnelMenuNote,
 } from "./lib.js";
 
 const { invoke } = window.__TAURI__.core;
@@ -593,13 +594,16 @@ function flowActions(flow) {
 
 function openMenu(x, y, flow) {
   const commands = flowCommands(flow);
-  if (!commands.length) return;
+  const note = commands.length ? null : tunnelMenuNote(flow);
+  if (!commands.length && !note) return;
   const menu = $("menu");
   menu.replaceChildren(
-    ...commands.map((c) =>
-      c === null
-        ? el("hr")
-        : el("button", { type: "button", role: "menuitem", onclick: () => { closeMenu(); c[1](); } }, c[0])),
+    ...(note
+      ? [el("p", { class: "menu-note", role: "note", text: note })]
+      : commands.map((c) =>
+          c === null
+            ? el("hr")
+            : el("button", { type: "button", role: "menuitem", onclick: () => { closeMenu(); c[1](); } }, c[0]))),
   );
   menu.hidden = false;
   // Que no se salga de la ventana.

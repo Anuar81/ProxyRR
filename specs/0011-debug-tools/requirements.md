@@ -1,6 +1,6 @@
 # 0011 — Herramientas de depuración (F3)
 
-- Estado: en curso
+- Estado: terminada (PR #10)
 - Fase: F3
 - Depende de: 0004, 0005, 0007, 0008, 0009
 - Rama: `spec/0011-f3-debug-tools`

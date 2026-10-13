@@ -29,7 +29,7 @@ Referencia funcional: el set de features de Proxyman (implementación propia, si
 | 0009 | [desktop-mvp](0009-desktop-mvp/requirements.md) | F2 | terminada (PR #8) |
 | 0010 | [android-and-debt](0010-android-and-debt/requirements.md) | F1/F4 | terminada (PR #9) |
 | 0011 | [debug-tools](0011-debug-tools/requirements.md) | F3 | terminada (PR #10) |
-| 0012 | [macos-linux-validation](0012-macos-linux-validation/requirements.md) | cierre | aprobada: checklist manual en Mac y Linux (TD-009) |
+| 0012 | [macos-linux-validation](0012-macos-linux-validation/requirements.md) | cierre | en curso: macOS ✅ (2026-10-13); falta Linux (sección C, TD-009) |
 | 0013 | [macos-installer](0013-macos-installer/requirements.md) | distribución | borrador: `.dmg` firmado y notarizado, CLI incluida, release por tag |
 
 Orden acordado para llegar rápido a algo usable (la app de escritorio):

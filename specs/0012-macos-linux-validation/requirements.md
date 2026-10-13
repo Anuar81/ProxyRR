@@ -182,8 +182,22 @@ una app del emulador se ve descifrada; al cerrar la app el emulador sigue con in
   vio descifrado (`BODY · 429 B · APPLICATION/JSON`, JSON formateado). Para saltear la bienvenida de
   Chrome se usaron flags de depuración (`--disable-fre`), que no afectan al proxy.
   Al cerrar la app: `http_proxy=:0` y el emulador siguió navegando normal.
-B9 🔐 ⬜ `proxyrr ca uninstall` → `ca status` dice "no instalada" y desapareció del llavero. No borró
+B9 🔐 ✅ `proxyrr ca uninstall` → `ca status` dice "no instalada" y desapareció del llavero. No borró
 ninguna otra CA.
+- macOS (con OK del usuario, app y proxy cerrados, proxy del sistema `Enabled: No`):
+  ```
+  Quitar la confianza SSL de la CA     $ security remove-trusted-cert …/ca.pem
+  Borrar la CA (por huella SHA-1)      $ security delete-certificate -Z 7C6AEBAA… login.keychain-db
+  Listo: ProxyRR CA (f950a201) ya no es de confianza en este equipo.
+  ```
+  `ca status` → `[ ] llavero de inicio de sesión`, `[ ] confianza SSL`, "No está instalada". Ni
+  `security find-certificate -c "ProxyRR CA"` ni `dump-trust-settings` la encuentran; borra por huella,
+  así que no toca otras CA. Con `start --mitm`, `curl` sin `-k` ahora falla (`(60) unable to get local
+  issuer certificate`), como corresponde. `ca.pem`/`ca.key.pem` siguen en el directorio de datos (no
+  se borran: reinstalar con `ca install` usa la misma CA).
+
+**macOS cerrado (2026-10-13):** sección B completa (B4 no aplica, TD-013). La sección C queda para un
+Linux real; TD-009 sigue parcial hasta entonces.
 
 ## C. Linux (Ubuntu/Debian; anotar si es otra distro)
 

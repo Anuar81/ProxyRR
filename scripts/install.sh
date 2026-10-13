@@ -9,6 +9,7 @@
 #
 # Variables opcionales:
 #   PROXYRR_VERSION    versión a instalar (p. ej. 0.1.0); por defecto, la última release
+#   PROXYRR_ARCH       apple-silicon o intel; por defecto, la de esta Mac
 #   PROXYRR_APPS_DIR   dónde dejar ProxyRR.app
 #   PROXYRR_BIN_DIR    dónde enlazar la CLI
 #   PROXYRR_BASE_URL   base de las releases (por defecto https://github.com/Anuar81/ProxyRR/releases)
@@ -31,12 +32,26 @@ command -v shasum >/dev/null || die "falta shasum"
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/proxyrr-install.XXXXXX")
 trap 'rm -rf "$TMP"' EXIT INT TERM
 
+# Arquitectura real de la Mac: `sysctl hw.optional.arm64` da 1 en Apple Silicon aunque esta terminal
+# corra bajo Rosetta (donde `uname -m` diría x86_64).
+if [ -n "${PROXYRR_ARCH:-}" ]; then
+  LABEL=$PROXYRR_ARCH
+elif [ "$(sysctl -n hw.optional.arm64 2>/dev/null || echo 0)" = 1 ]; then
+  LABEL=apple-silicon
+else
+  LABEL=intel
+fi
+case "$LABEL" in
+  apple-silicon | intel) ;;
+  *) die "PROXYRR_ARCH tiene que ser apple-silicon o intel" ;;
+esac
+
 say "Bajando la lista de archivos de $URL"
 curl -fsSL "$URL/SHA256SUMS" -o "$TMP/SHA256SUMS" || die "no pude bajar SHA256SUMS de $URL"
-NAME=$(awk '$2 ~ /^proxyrr-.*-macos-universal\.tar\.gz$/ { print $2; exit }' "$TMP/SHA256SUMS")
-[ -n "$NAME" ] || die "SHA256SUMS no menciona el tarball de macOS"
+NAME=$(awk -v want="-macos-$LABEL.tar.gz" '$2 ~ /^proxyrr-/ && substr($2, length($2) - length(want) + 1) == want { print $2; exit }' "$TMP/SHA256SUMS")
+[ -n "$NAME" ] || die "esta release no tiene versión para Mac $LABEL"
 
-say "Bajando $NAME"
+say "Bajando $NAME (Mac $LABEL)"
 curl -fsSL "$URL/$NAME" -o "$TMP/$NAME" || die "no pude bajar $NAME"
 
 say "Verificando SHA-256"

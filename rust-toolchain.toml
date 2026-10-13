@@ -1,6 +1,6 @@
 [toolchain]
 channel = "1.98.1"
 components = ["clippy", "rustfmt"]
-# Los dos targets de macOS: el instalador es universal (spec 0013). En otros sistemas no estorban.
+# Los dos targets de macOS: hay un instalador por arquitectura (spec 0013). En otros sistemas no estorban.
 targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"]
 profile = "minimal"

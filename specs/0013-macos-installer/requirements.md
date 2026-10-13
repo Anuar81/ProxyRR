@@ -35,17 +35,19 @@ secretos cargados (criterio 9).
 1. **Versión única.** La versión sale del `Cargo.toml` del workspace; si `tauri.conf.json` la repite y
    difiere, falla un test. El tag `vX.Y.Z` DEBE coincidir, o el workflow falla antes de compilar.
    Test: `version_matches_workspace` (proxyrr-desktop).
-2. **Build local.** `scripts/build-macos.sh` DEBE armar en una Mac, sin CI ni cuenta de Apple:
-   `ProxyRR.app`, `ProxyRR_<versión>_universal.dmg` (Apple Silicon + Intel),
-   `proxyrr-<versión>-macos-universal.tar.gz` (app + CLI) y `SHA256SUMS`. Así el usuario puede pasar
-   una versión antes de tener la release automática.
+2. **Build local.** `scripts/build-macos.sh` DEBE armar en una Mac, sin CI ni cuenta de Apple, **una
+   versión por arquitectura** (no se publica una universal: cada descarga pesa la mitad):
+   `ProxyRR_<versión>_apple-silicon.dmg` y `ProxyRR_<versión>_intel.dmg`,
+   `proxyrr-<versión>-macos-apple-silicon.tar.gz` y `proxyrr-<versión>-macos-intel.tar.gz` (app + CLI) y
+   `SHA256SUMS`. Así el usuario puede pasar una versión antes de tener la release automática.
 3. **Bundle.** El `.app` DEBE tener ícono `.icns`, identificador `com.proxyrr.desktop`,
-   `CFBundleShortVersionString` = versión y `LSMinimumSystemVersion` = 13.0, y ser universal.
-   Test: `scripts/check-macos-bundle.sh` (`Info.plist`, `lipo -archs`).
+   `CFBundleShortVersionString` = versión y `LSMinimumSystemVersion` = 13.0, y solo la arquitectura de
+   su versión (`arm64` o `x86_64`). Test: `scripts/check-macos-bundle.sh --arch` (`Info.plist`,
+   `lipo -archs`).
 4. **Firma ad-hoc válida.** Sin Developer ID, el `.app` y la CLI DEBEN quedar firmados ad-hoc **después**
-   de armar el bundle (`codesign --force --deep -s -`), y `codesign --verify --deep --strict` DEBE pasar.
+   de armar el bundle, de adentro hacia afuera, y `codesign --verify --deep --strict` DEBE pasar.
    Evita el error "ProxyRR está dañado y no se puede abrir". Test: el mismo script del criterio 3.
-5. **CLI incluida.** El `.app` DEBE traer `Contents/MacOS/proxyrr` (universal). Certificado… → Este
+5. **CLI incluida.** El `.app` DEBE traer `Contents/MacOS/proxyrr` (de su arquitectura). Certificado… → Este
    equipo DEBE ofrecer "Instalar la CLI en la terminal", que crea `/usr/local/bin/proxyrr` con el diálogo
    de administrador del sistema (o muestra el comando si se cancela). La CLI y la app comparten el
    directorio de datos y la CA. Test: `cli_link_plan` (plan sin ejecutar, como `ca install --dry-run`).
@@ -81,8 +83,12 @@ secretos cargados (criterio 9).
 - **Herramienta:** `tauri-cli` fijada a la 2.x que corresponde a `tauri =2.12.0`
   (`cargo install tauri-cli --version =<x> --locked`). `cargo tauri icon icons/icon.png` genera el
   `.icns`; se commitea.
-- **Universal:** targets `aarch64-apple-darwin` y `x86_64-apple-darwin` (en `rust-toolchain.toml`); la
-  CLI se une con `lipo`; la app con `cargo tauri build --target universal-apple-darwin --bundles app`.
+- **Por arquitectura:** targets `aarch64-apple-darwin` y `x86_64-apple-darwin` (en
+  `rust-toolchain.toml`); para cada uno, la CLI con `cargo build --target` y la app con
+  `cargo tauri build --target <t> --bundles app`. Con la universal la descarga pesaba 17 MB; cada
+  versión por separado, ~8 MB.
+- **`install.sh` elige la arquitectura** con `sysctl -n hw.optional.arm64` (1 en Apple Silicon aunque
+  la terminal corra bajo Rosetta, donde `uname -m` diría `x86_64`). `PROXYRR_ARCH` la fuerza.
 - **CLI dentro del `.app`:** el script la copia a `Contents/MacOS/` después del build de Tauri. No es
   sidecar: la app no la lanza.
 - **`.dmg` con `hdiutil`**, no con el bundler de Tauri: el de Tauri arma la ventana con AppleScript y

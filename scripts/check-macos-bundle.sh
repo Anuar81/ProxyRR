@@ -1,18 +1,22 @@
 #!/bin/sh
 # Verifica un ProxyRR.app armado (spec 0013, criterios 3 y 4; con --signed también el 9).
 #
-#   scripts/check-macos-bundle.sh [ruta/a/ProxyRR.app] [--signed]
+#   scripts/check-macos-bundle.sh ruta/a/ProxyRR.app --arch arm64|x86_64 [--signed]
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-APP="$ROOT/target/universal-apple-darwin/release/bundle/macos/ProxyRR.app"
+APP=""
+ARCH=""
 SIGNED=no
-for arg in "$@"; do
-  case "$arg" in
+while [ $# -gt 0 ]; do
+  case "$1" in
     --signed) SIGNED=yes ;;
-    *) APP=$arg ;;
+    --arch) shift; ARCH=${1:-} ;;
+    *) APP=$1 ;;
   esac
+  shift
 done
+[ -n "$APP" ] && [ -n "$ARCH" ] || { echo "uso: $0 ProxyRR.app --arch arm64|x86_64 [--signed]" >&2; exit 2; }
 
 VERSION=$(cd "$ROOT" && cargo pkgid -p proxyrr-cli | sed 's/.*[#@]//')
 PLIST="$APP/Contents/Info.plist"
@@ -41,10 +45,15 @@ fi
 
 MAIN="$APP/Contents/MacOS/$(plist CFBundleExecutable)"
 CLI="$APP/Contents/MacOS/proxyrr"
-expect "arquitecturas de la app" "$(archs "$MAIN")" "arm64 x86_64"
+expect "arquitectura de la app" "$(archs "$MAIN")" "$ARCH"
 if [ -x "$CLI" ]; then
-  expect "arquitecturas de la CLI" "$(archs "$CLI")" "arm64 x86_64"
-  expect "proxyrr --version" "$("$CLI" --version 2>&1)" "proxyrr $VERSION"
+  expect "arquitectura de la CLI" "$(archs "$CLI")" "$ARCH"
+  # Solo se puede ejecutar si es de esta Mac, o x86_64 con Rosetta instalado.
+  if [ "$ARCH" = "$(uname -m)" ] || { [ "$ARCH" = x86_64 ] && arch -x86_64 /usr/bin/true 2>/dev/null; }; then
+    expect "proxyrr --version" "$(arch -"$ARCH" "$CLI" --version 2>&1)" "proxyrr $VERSION"
+  else
+    echo "  ➖ proxyrr --version (no se puede ejecutar $ARCH en esta Mac)"
+  fi
 else
   fail "falta la CLI en Contents/MacOS/proxyrr"
 fi

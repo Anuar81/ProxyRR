@@ -10,7 +10,8 @@ Android e iOS. Sin límite de dominios.
 
 ## Instalar en macOS
 
-macOS 13 o más nuevo, Apple Silicon o Intel. Con una línea, sin avisos de Gatekeeper:
+macOS 13 o más nuevo, Apple Silicon o Intel. Con una línea, sin avisos de Gatekeeper (elige sola la
+versión de tu Mac):
 
 ```sh
 curl -fsSL https://github.com/Anuar81/ProxyRR/releases/latest/download/install.sh | sh
@@ -21,10 +22,11 @@ deja `ProxyRR.app` en `/Applications` (o `~/Applications`) y enlaza la CLI `prox
 `/usr/local/bin` o `~/.local/bin`. No usa `sudo` ni instala la CA. Para otra versión:
 `PROXYRR_VERSION=0.1.0` delante de `sh`.
 
-**Con el `.dmg`** de la [página de releases](https://github.com/Anuar81/ProxyRR/releases): abrilo y
-arrastrá ProxyRR a Aplicaciones. Las releases "(sin notarizar)" no están firmadas con una cuenta de
-Apple Developer, así que la primera vez macOS las bloquea. Se abren una sola vez de cualquiera de estas
-formas:
+**Con el `.dmg`** de la [página de releases](https://github.com/Anuar81/ProxyRR/releases): hay uno por
+procesador. Menú  → Acerca de esta Mac: "Chip Apple M…" → `_apple-silicon.dmg`; "Procesador Intel"
+→ `_intel.dmg`. Abrilo y arrastrá ProxyRR a Aplicaciones. Las releases "(sin notarizar)" no están
+firmadas con una cuenta de Apple Developer, así que la primera vez macOS las bloquea. Se abren una sola
+vez de cualquiera de estas formas:
 
 - Ajustes del Sistema → Privacidad y seguridad → **Abrir igualmente** (pide tu contraseña).
 - En la terminal: `xattr -dr com.apple.quarantine /Applications/ProxyRR.app`
@@ -45,7 +47,7 @@ queda de confianza. Después borrá `/Applications/ProxyRR.app` y el enlace `pro
 guarda la clave privada de la CA.
 
 **Armar el instalador** (en una Mac, sin cuenta de Apple): `cargo install tauri-cli --version =2.12.0
---locked` una vez y después `scripts/build-macos.sh`. Deja en `dist/` el `.dmg`, el tarball, `install.sh`
+--locked` una vez y después `scripts/build-macos.sh`. Deja en `dist/` los `.dmg` y tarballs de Apple Silicon e Intel, `install.sh`
 y `SHA256SUMS`, listos para pasar a mano. Empujar un tag `vX.Y.Z` hace lo mismo en CI y lo sube a una
 release en borrador.
 

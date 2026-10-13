@@ -23,6 +23,8 @@ Cada entrada: id, origen, qué pasa, por qué importa, propuesta. Al pagarla: `P
 | TD-013 | 0012 | abierta (Firefox no se probó en ningún sistema) |
 | TD-014 | 0012 | pagada en 0012 (el menú de un túnel explica por qué no hay comandos) |
 | TD-015 | 0012 | pagada en 0012 (se registra el método y la URL que salieron) |
+| TD-016 | 0013 | abierta (WebSocket dentro de HTTPS descifrado) |
+| TD-017 | 0013 | abierta (proxy del sistema automático; apps que lo ignoran) |
 
 ## TD-001 — Timeout de conexión al origen de 10 s
 
@@ -191,3 +193,26 @@ Cada entrada: id, origen, qué pasa, por qué importa, propuesta. Al pagarla: `P
 - **Pagada en 0012:** si el request pasó por un breakpoint, `HttpFlow` lleva el método y la URL con los
   que salió (los headers ya lo hacían). Test: `breakpoint_edits_the_request` en
   `proxyrr-rules/tests/rules_proxy.rs`, que falla sin el arreglo. No se guarda la URL original aparte.
+
+## TD-016 — WebSocket dentro de HTTPS descifrado
+
+- **Origen:** 0013 (prueba en la Mac de un compañero, simulador de iOS con una app propia). Ya estaba
+  fuera de alcance desde 0005 ("hoy un `wss://` descifrado falla").
+- **Qué pasa:** un `wss://` a un host que se descifra falla: el proxy quita `Upgrade` (hop-by-hop) y no
+  empalma las dos conexiones. Las apps con chat, notificaciones en vivo, Firebase o Socket.IO parecen
+  "no andar nada". Proxyman sí lo soporta.
+- **Por qué importa:** es la diferencia más visible contra Proxyman al probar una app real.
+- **Propuesta:** primero passthrough: si el request trae `Upgrade: websocket`, reenviarlo con sus
+  headers, y con el `101` empalmar cliente y origen (como el túnel opaco), registrando el flujo. Ver los
+  frames en vivo queda para F5. Mientras tanto: poner el host del socket en «Sin descifrar».
+
+## TD-017 — Proxy del sistema automático; apps que lo ignoran
+
+- **Origen:** 0013 (misma prueba).
+- **Qué pasa:** la app no prende ni apaga el proxy del sistema al Iniciar/Detener: hay que hacerlo a
+  mano en Ajustes, y si se olvida apagarlo, la Mac queda sin internet con ProxyRR cerrado. Además, las
+  apps que no usan el proxy del sistema no se ven (Proxyman las captura con una Network Extension, que
+  exige cuenta paga de Apple).
+- **Propuesta:** interruptor "Proxy del sistema" en la app (`networksetup` en macOS, guardando y
+  restaurando lo anterior al Detener o al cerrar, como hace Android con `Revertir`). La captura de apps
+  que ignoran el proxy queda para cuando haya cuenta de Apple Developer.

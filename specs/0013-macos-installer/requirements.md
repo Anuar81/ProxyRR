@@ -1,6 +1,6 @@
 # 0013 — Instalador para macOS
 
-- Estado: en curso (aprobada por el usuario el 2026-10-13: gratis primero)
+- Estado: terminada (aprobada el 2026-10-13: gratis primero; cerrada el mismo día)
 - Fase: distribución (la habilita 0012: macOS validado a mano)
 - Depende de: 0009, 0012
 - Rama: `spec/0013-macos-installer` (un único PR al final)
@@ -120,6 +120,27 @@ secretos cargados (criterio 9).
 6. Job de bundle en `ci.yml` y `release.yml` con notarización condicional y entitlements.
 7. README (criterio 10).
 8. Checklist manual (criterio 11) ejecutada y anotada acá.
+
+## Resultados (2026-10-13)
+
+- ✅ 1–5, 10 en esta Mac (macOS 27.0, arm64): `scripts/build-macos.sh` armó
+  `ProxyRR_0.1.0_apple-silicon.dmg` (8,1 MB), `ProxyRR_0.1.0_intel.dmg` (9,0 MB), los dos tarballs y
+  `SHA256SUMS`; `check-macos-bundle.sh` pasó en las dos (identificador, versión, 13.0, ícono, una sola
+  arquitectura, firma ad-hoc válida). Con el atributo de cuarentena, Gatekeeper dice `rejected` (se abre
+  con "Abrir igualmente"), no "dañada". `version_matches_workspace` y `cli_link_plan` en verde.
+- ✅ 6: `scripts/test-install.sh` (8 casos) y una instalación real del tarball en un directorio temporal
+  (`proxyrr --version` → `proxyrr 0.1.0`, bajó la versión `apple-silicon`).
+- ⬜ 7–8: `release.yml` y el job `macos-bundle` corren recién en GitHub (PR y tag).
+- ➖ 9: sin cuenta de Apple Developer; el camino con secretos está escrito pero sin probar.
+- 🟡 11: en la Mac de un compañero (Apple Silicon) instaló y abrió. El simulador de iOS no mostraba nada
+  hasta prender el proxy de la Mac: la guía no lo decía claro → reescrita (pasos de la app, cómo saber
+  que descifra, apagar el proxy al terminar; test `ios_simulator_says_how_to_check_it_decrypts`). Con
+  eso, su app del simulador siguió sin andar del todo: lo más probable es WebSocket sobre HTTPS
+  descifrado ([TD-016](../TECH-DEBT.md#td-016--websocket-dentro-de-https-descifrado)). Faltan apps de
+  la Mac que no usan el proxy del sistema
+  ([TD-017](../TECH-DEBT.md#td-017--proxy-del-sistema-automático-apps-que-lo-ignoran)). En esta Mac el
+  Safari del simulador se ve descifrado con la app instalada. La versión Intel no se ejecutó (sin
+  Rosetta ni Mac Intel a mano).
 
 ## Necesita del usuario
 

@@ -2,7 +2,7 @@
 //! se prueba con `cargo test` sin abrir ventanas.
 
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use base64::Engine as _;
@@ -13,6 +13,7 @@ use proxyrr_api::{
 };
 use proxyrr_cert::{CA_CERT_FILE, CertificateAuthority};
 use proxyrr_core::{Headers, LocalSite, ProxyConfig};
+use proxyrr_devices::cli;
 use proxyrr_devices::guide::{self, GuideContext, Target};
 use proxyrr_devices::trust::{self, LinuxTools, Os, Runner, SystemRunner};
 use proxyrr_devices::{CaFiles, CertSite, lan_ip, qr_svg};
@@ -135,6 +136,29 @@ pub struct CaOverview {
     pub firefox_note: Option<String>,
     /// Advertencia previa a instalar.
     pub warning: &'static str,
+}
+
+/// La CLI incluida en el `.app` y su enlace en el `PATH`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CliOverview {
+    /// Ruta de la CLI dentro del `.app`; `None` si esta copia no la trae (p. ej. `cargo run`).
+    pub bundled: Option<String>,
+    /// `true` si [`cli::LINK`] ya apunta a ella.
+    pub linked: bool,
+    /// Dónde se enlaza.
+    pub link: &'static str,
+    /// El mismo enlace, para hacerlo a mano en la terminal.
+    pub manual: Option<String>,
+}
+
+/// La CLI al lado del ejecutable de la app (`Contents/MacOS/proxyrr`), solo en macOS.
+fn bundled_cli(os: Os) -> Option<PathBuf> {
+    if os != Os::Macos {
+        return None;
+    }
+    let exe = std::env::current_exe().ok()?;
+    let cli = exe.parent()?.join("proxyrr");
+    cli.is_file().then_some(cli)
 }
 
 /// Un almacén.
@@ -519,6 +543,33 @@ impl Backend {
         let plan = trust::uninstall_plan(self.os, &self.pem, &self.files, &self.linux)?;
         trust::apply(&plan, self.runner.as_ref())?;
         Ok(self.ca_overview())
+    }
+
+    /// Estado de la CLI incluida en el `.app` (solo lee).
+    #[must_use]
+    pub fn cli_overview(&self) -> CliOverview {
+        let bundled = bundled_cli(self.os);
+        CliOverview {
+            linked: bundled
+                .as_deref()
+                .is_some_and(|c| cli::is_linked(Path::new(cli::LINK), c)),
+            manual: bundled.as_deref().map(cli::manual_command),
+            bundled: bundled.map(|c| c.display().to_string()),
+            link: cli::LINK,
+        }
+    }
+
+    /// Enlaza la CLI incluida en [`cli::LINK`] (el sistema pide la contraseña en su diálogo).
+    ///
+    /// # Errors
+    /// Si la app no trae la CLI (p. ej. en `cargo run`) o el paso falló o se canceló.
+    pub fn cli_link(&self) -> Result<CliOverview, String> {
+        let bundled = bundled_cli(self.os).ok_or_else(|| {
+            "esta copia de la app no trae la CLI (solo la versión instalada)".to_owned()
+        })?;
+        let step = cli::link_plan(self.os, &bundled)?;
+        trust::apply(&[step], self.runner.as_ref())?;
+        Ok(self.cli_overview())
     }
 
     /// Guía para un destino, con el puerto del proxy.

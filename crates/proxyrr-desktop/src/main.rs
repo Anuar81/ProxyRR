@@ -21,7 +21,7 @@ mod backend;
 mod tools;
 
 use android::{ConfiguredDto, DevicesDto};
-use backend::{Backend, BodyView, CaOverview, GuideDto, Side, StartRequest};
+use backend::{Backend, BodyView, CaOverview, CliOverview, GuideDto, Side, StartRequest};
 use proxyrr_rules::{BreakpointEvent, Rule};
 use tools::{ComposeDto, DraftKind, EditedDto, PausedDto};
 
@@ -91,6 +91,16 @@ async fn ca_install(state: AppState<'_>) -> Result<CaOverview, String> {
 #[tauri::command]
 async fn ca_uninstall(state: AppState<'_>) -> Result<CaOverview, String> {
     blocking(&state, Backend::ca_uninstall).await
+}
+
+#[tauri::command]
+fn cli_overview(state: AppState<'_>) -> CliOverview {
+    state.cli_overview()
+}
+
+#[tauri::command]
+async fn cli_link(state: AppState<'_>) -> Result<CliOverview, String> {
+    blocking(&state, Backend::cli_link).await
 }
 
 #[tauri::command]
@@ -290,6 +300,8 @@ fn main() {
             ca_overview,
             ca_install,
             ca_uninstall,
+            cli_overview,
+            cli_link,
             guide,
             install_ios_simulator,
             export_har,

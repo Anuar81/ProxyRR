@@ -1,7 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "ProxyRR",
-  "version": "0.1.0",
   "identifier": "com.proxyrr.desktop",
   "build": {
     "frontendDist": "ui"
@@ -25,6 +24,11 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "icon": ["icons/icon.png", "icons/icon.ico"]
+    "icon": ["icons/icon.png", "icons/icon.icns", "icons/icon.ico"],
+    "category": "DeveloperTool",
+    "copyright": "ProxyRR",
+    "macOS": {
+      "minimumSystemVersion": "13.0"
+    }
   }
 }

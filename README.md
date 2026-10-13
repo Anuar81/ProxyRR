@@ -5,8 +5,53 @@ Proxyman/Charles: intercepta, inspecciona y modifica el tráfico de navegadores,
 Android e iOS. Sin límite de dominios.
 
 > Estado: F0–F3 terminadas (proxy, HTTPS, captura, API, app de escritorio, Android, reglas). Probado
-> en Windows; macOS y Linux pasan el CI pero falta probarlos a mano (TD-009). Todavía no hay
-> instalador: se corre desde el código.
+> a mano en Windows y macOS; Linux pasa el CI pero falta probarlo a mano (TD-009). Hay instalador
+> para macOS; en Windows y Linux se corre desde el código.
+
+## Instalar en macOS
+
+macOS 13 o más nuevo, Apple Silicon o Intel. Con una línea, sin avisos de Gatekeeper (elige sola la
+versión de tu Mac):
+
+```sh
+curl -fsSL https://github.com/Anuar81/ProxyRR/releases/latest/download/install.sh | sh
+```
+
+Baja la última release, verifica su SHA-256 contra `SHA256SUMS` (si no coincide, no instala nada),
+deja `ProxyRR.app` en `/Applications` (o `~/Applications`) y enlaza la CLI `proxyrr` en
+`/usr/local/bin` o `~/.local/bin`. No usa `sudo` ni instala la CA. Para otra versión:
+`PROXYRR_VERSION=0.1.0` delante de `sh`.
+
+**Con el `.dmg`** de la [página de releases](https://github.com/Anuar81/ProxyRR/releases): hay uno por
+procesador. Menú  → Acerca de esta Mac: "Chip Apple M…" → `_apple-silicon.dmg`; "Procesador Intel"
+→ `_intel.dmg`. Abrilo y arrastrá ProxyRR a Aplicaciones. Las releases "(sin notarizar)" no están
+firmadas con una cuenta de Apple Developer, así que la primera vez macOS las bloquea. Se abren una sola
+vez de cualquiera de estas formas:
+
+- Ajustes del Sistema → Privacidad y seguridad → **Abrir igualmente** (pide tu contraseña).
+- En la terminal: `xattr -dr com.apple.quarantine /Applications/ProxyRR.app`
+
+Con el `.dmg`, la CLI se instala desde la app: **Certificado… → Este equipo → Instalar la CLI en la
+terminal**.
+
+**Verificar lo bajado:** `shasum -a 256 ProxyRR_*.dmg` tiene que dar lo mismo que su línea en
+`SHA256SUMS`.
+
+**Macs del trabajo:** si tu Mac está administrada (Ajustes del Sistema → Privacidad y seguridad →
+Perfiles), IT puede bloquear apps sin notarizar o la instalación de una CA propia. En ese caso hace
+falta una release notarizada o permiso de IT.
+
+**Desinstalar:** primero `proxyrr ca uninstall` (o el botón Desinstalar de la app), así la CA no
+queda de confianza. Después borrá `/Applications/ProxyRR.app` y el enlace `proxyrr`
+(`which proxyrr`). Opcional: el directorio de datos `~/Library/Application Support/ProxyRR`, que
+guarda la clave privada de la CA.
+
+**Armar el instalador** (en una Mac, sin cuenta de Apple): `cargo install tauri-cli --version =2.12.0
+--locked` una vez y después `scripts/build-macos.sh`. Deja en `dist/` los `.dmg` y tarballs de Apple Silicon e Intel, `install.sh`
+y `SHA256SUMS`, listos para pasar a mano. Para publicar una versión: en GitHub, Releases → **Draft a
+new release** → tag nuevo `vX.Y.Z` (igual a la versión de `Cargo.toml`) → **Publish**; el workflow
+`Release` arma los instaladores y se los sube a esa release en unos 15 minutos. Empujar el tag desde
+la terminal hace lo mismo, pero deja la release en borrador.
 
 ## Arrancar
 

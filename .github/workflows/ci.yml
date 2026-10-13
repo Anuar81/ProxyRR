@@ -64,3 +64,19 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@c3bbe7e4e3f7baeee1a3dd9aec0a3b2aded580fb # v2.1.1
         with:
           command: check
+
+  # Arma el instalador de macOS sin firmar ni publicar nada (spec 0013, criterio 8).
+  macos-bundle:
+    name: instalador macOS (sin publicar)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
+      - name: tauri-cli
+        run: cargo install tauri-cli --version =2.12.0 --locked
+      - name: install.sh
+        run: sh scripts/test-install.sh
+      - name: Build (firma ad-hoc) y chequeos del bundle
+        run: sh scripts/build-macos.sh

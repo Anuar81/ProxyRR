@@ -406,7 +406,44 @@ async function thisComputer() {
       ca.installed ? action("Desinstalar", "ca_uninstall") : action("Instalar como raíz de confianza", "ca_install")),
     el("p", { class: "d-meta", text: "El sistema puede pedirte confirmación o tu contraseña en su propio diálogo." }),
     ca.firefox_note ? el("p", { class: "note", text: ca.firefox_note }) : "",
+    ...(await cliSection()),
   ];
+}
+
+/** La CLI incluida en el `.app` (solo en la versión instalada de macOS). */
+async function cliSection() {
+  let cli;
+  try {
+    cli = await call("cli_overview");
+  } catch {
+    return [];
+  }
+  if (!cli.bundled) return [];
+  const parts = [el("h2", { text: "Terminal" })];
+  if (cli.linked) {
+    parts.push(el("p", {}, "La CLI está instalada: ", el("code", { text: "proxyrr" }), ` (${cli.link}).`));
+  } else {
+    parts.push(
+      el("p", {}, "Para usar ", el("code", { text: "proxyrr" }), ` en la terminal, la app la enlaza en ${cli.link}.`),
+      el("div", { class: "actions" },
+        el("button", {
+          type: "button",
+          class: "primary",
+          onclick: async (ev) => {
+            ev.target.disabled = true;
+            try {
+              await call("cli_link");
+            } catch {
+              // mostrado
+            }
+            showCert("this");
+          },
+        }, "Instalar la CLI en la terminal")),
+      el("p", { class: "d-meta", text: "Pide la contraseña de administrador. Si preferís hacerlo a mano:" }),
+      el("pre", { class: "body", text: cli.manual }),
+    );
+  }
+  return parts;
 }
 
 async function deviceGuide(target) {

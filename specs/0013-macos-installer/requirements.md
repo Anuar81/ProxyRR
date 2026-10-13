@@ -1,6 +1,6 @@
 # 0013 — Instalador para macOS
 
-- Estado: borrador
+- Estado: en curso (aprobada por el usuario el 2026-10-13: gratis primero)
 - Fase: distribución (la habilita 0012: macOS validado a mano)
 - Depende de: 0009, 0012
 - Rama: `spec/0013-macos-installer` (un único PR al final)
@@ -53,8 +53,9 @@ secretos cargados (criterio 9).
    `PROXYRR_VERSION`), verificar su SHA-256 contra `SHA256SUMS` y abortar si no coincide, copiar
    `ProxyRR.app` a `/Applications` (o `~/Applications` si no hay permiso), enlazar la CLI en
    `~/.local/bin` o `/usr/local/bin` y decir cuál. No usa `sudo` sin avisar; no instala la CA. Corre con
-   el `sh` de macOS (POSIX). Test: `scripts/test-install.sh` contra un servidor local en `127.0.0.1` con
-   un tarball de prueba (checksum bueno → instala en un directorio temporal; malo → aborta sin tocar).
+   el `sh` de macOS (POSIX). Test: `scripts/test-install.sh` contra una release falsa en `file://` (sin
+   red; `curl` la baja igual que de GitHub): checksum bueno → instala en un directorio temporal; malo →
+   aborta sin tocar el destino; versión inexistente → falla con mensaje.
 7. **Release.** CUANDO se empuja un tag `v*`, `.github/workflows/release.yml` DEBE correr la
    verificación completa en `macos-latest`, armar con el script del criterio 2, correr el del 3/4 y subir
    a una GitHub Release en **borrador**: `.dmg`, tarball, `SHA256SUMS` e `install.sh`. Si no está
@@ -81,16 +82,20 @@ secretos cargados (criterio 9).
   (`cargo install tauri-cli --version =<x> --locked`). `cargo tauri icon icons/icon.png` genera el
   `.icns`; se commitea.
 - **Universal:** targets `aarch64-apple-darwin` y `x86_64-apple-darwin` (en `rust-toolchain.toml`); la
-  CLI se une con `lipo`; la app con `cargo tauri build --target universal-apple-darwin`.
-- **CLI dentro del `.app`:** `bundle.macOS.files` la copia a `Contents/MacOS/`. No es sidecar: la app
-  no la lanza.
+  CLI se une con `lipo`; la app con `cargo tauri build --target universal-apple-darwin --bundles app`.
+- **CLI dentro del `.app`:** el script la copia a `Contents/MacOS/` después del build de Tauri. No es
+  sidecar: la app no la lanza.
+- **`.dmg` con `hdiutil`**, no con el bundler de Tauri: el de Tauri arma la ventana con AppleScript y
+  Finder, que en CI falla seguido. `hdiutil create -format UDZO` con la app y un enlace a
+  `/Applications` es determinista.
 - **Firma ad-hoc:** el linker de Apple Silicon ya firma ad-hoc cada binario, pero copiar la CLI dentro
-  del bundle invalida el sello del `.app`; por eso se re-firma el bundle entero al final.
-- **Developer ID (criterio 9):** Tauri firma con `APPLE_SIGNING_IDENTITY`, `APPLE_CERTIFICATE`,
-  `APPLE_CERTIFICATE_PASSWORD` y notariza con `APPLE_API_ISSUER`, `APPLE_API_KEY`, `APPLE_API_KEY_PATH`
-  (API key de App Store Connect). Entitlements (`crates/proxyrr-desktop/macos/entitlements.plist`):
-  `com.apple.security.network.client` y `.server`; sin App Sandbox (el proxy escucha en un puerto y toca
-  el llavero y `networksetup`).
+  del bundle invalida el sello del `.app`; por eso se re-firma al final, de adentro hacia afuera.
+- **Developer ID (criterio 9):** firma el script (no Tauri) con `APPLE_SIGNING_IDENTITY`, hardened
+  runtime y entitlements (`crates/proxyrr-desktop/macos/entitlements.plist`:
+  `com.apple.security.network.client` y `.server`; sin App Sandbox, porque el proxy escucha en un
+  puerto y toca el llavero y `networksetup`), y notariza con `notarytool` usando `APPLE_API_ISSUER`,
+  `APPLE_API_KEY`, `APPLE_API_KEY_PATH` (API key de App Store Connect). Se notariza y grapa la app y
+  después el `.dmg`. `release.yml` importa el `.p12` en un llavero temporal.
 - **Por qué `install.sh` no tiene aviso:** Gatekeeper solo revisa archivos con el atributo
   `com.apple.quarantine`, que ponen los navegadores, Slack, AirDrop, etc. `curl` no lo pone. La
   garantía pasa a ser el checksum y que el usuario confíe en la URL.

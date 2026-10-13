@@ -16,11 +16,13 @@ Cada entrada: id, origen, qué pasa, por qué importa, propuesta. Al pagarla: `P
 | TD-006 | 0004 | pagada en 0010 |
 | TD-007 | 0005 | pagada en 0010 |
 | TD-008 | 0005 | pagada en 0010 |
-| TD-009 | 0006 | abierta (necesita una Mac y un Linux reales) |
+| TD-009 | 0006 | parcial: macOS validado en 0012; falta un Linux real (sección C) |
 | TD-010 | 0006 | pagada en 0010 |
 | TD-011 | 0011 | pagada en 0011 (`GET /api/v1/breakpoints`, `POST /api/v1/breakpoints/{key}`, avisos `paused`/`resolved` por el WebSocket) |
 | TD-012 | 0011 | parcial: cURL para PowerShell hecho en 0011; falta "mantener body original" binario en Compose |
 | TD-013 | 0012 | abierta (Firefox no se probó en ningún sistema) |
+| TD-014 | 0012 | pagada en 0012 (el menú de un túnel explica por qué no hay comandos) |
+| TD-015 | 0012 | pagada en 0012 (se registra el método y la URL que salieron) |
 
 ## TD-001 — Timeout de conexión al origen de 10 s
 
@@ -175,6 +177,8 @@ Cada entrada: id, origen, qué pasa, por qué importa, propuesta. Al pagarla: `P
   abre nada ni avisa. Con la app arrancada en túnel por error, parece que el clic derecho está roto.
 - **Propuesta:** abrir el menú igual con un ítem deshabilitado ("Túnel sin descifrar: activá «Descifrar
   HTTPS» para usar reglas"), con su test en `tests-ui`.
+- **Pagada en 0012:** `tunnelMenuNote` (`ui/lib.js`) da el texto según sea túnel opaco, descifrado o
+  fallido, y `openMenu` lo muestra en lugar de quedarse mudo. Test en `tests-ui/lib.test.mjs`.
 
 ## TD-015 — El flujo editado en un breakpoint se registra con la URL original
 
@@ -184,3 +188,6 @@ Cada entrada: id, origen, qué pasa, por qué importa, propuesta. Al pagarla: `P
   response de la editada. Confunde al leer el HAR.
 - **Propuesta:** registrar lo que realmente salió (método/URL/headers editados) y marcar el flujo como
   editado, guardando la original como dato aparte.
+- **Pagada en 0012:** si el request pasó por un breakpoint, `HttpFlow` lleva el método y la URL con los
+  que salió (los headers ya lo hacían). Test: `breakpoint_edits_the_request` en
+  `proxyrr-rules/tests/rules_proxy.rs`, que falla sin el arreglo. No se guarda la URL original aparte.

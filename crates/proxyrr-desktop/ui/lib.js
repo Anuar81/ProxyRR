@@ -66,6 +66,19 @@ export function isShown(flow, query, showTunnels = false) {
   return (showTunnels || !isQuietTunnel(flow)) && matchesFilter(flow, query);
 }
 
+/**
+ * Qué decir al abrir el menú sobre un túnel (que no tiene comandos), para que el clic derecho no
+ * quede mudo (TD-014). `null` si `flow` no es un túnel.
+ */
+export function tunnelMenuNote(flow) {
+  if (!flow.tunnel && flow.kind !== "tunnel") return null;
+  if (!flow.intercepted) {
+    return "Túnel sin descifrar: no hay requests para usar. Marcá «Descifrar HTTPS» (y que el host no esté en «Sin descifrar») y volvé a Iniciar.";
+  }
+  if (flow.failed) return "El TLS de este túnel falló: no llegó ningún request. Mirá el aviso en el detalle.";
+  return "Túnel descifrado: sus requests están en la lista como https://. Usá el clic derecho sobre ellos.";
+}
+
 /** `host:puerto` de una URL http(s) (puerto por defecto incluido), o `""` si no parsea. */
 export function authorityOf(url) {
   try {

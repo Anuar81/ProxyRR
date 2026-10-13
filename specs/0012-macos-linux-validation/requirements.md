@@ -145,13 +145,13 @@ mock; Breakpoint → editar y Ejecutar; Exportar HAR deja un archivo en Descarga
   - Arreglo: la CSP no autorizaba el IPC de Tauri en macOS (`Refused to connect to ipc://localhost/…`
     en la consola, Tauri caía a `postMessage`). Se agregó `connect-src ipc: http://ipc.localhost`.
   - Falsa alarma que costó tiempo: el clic derecho "no andaba" porque la app había arrancado en túnel
-    (checkbox desmarcado): solo había `CONNECT httpbin.org:443`, y en un túnel el menú no abre ni avisa.
-    Quedó en [TD-014](../TECH-DEBT.md#td-014--el-menú-contextual-de-un-túnel-no-dice-nada). Para
+    (checkbox desmarcado): solo había `CONNECT httpbin.org:443`, y en un túnel el menú no abría ni avisaba.
+    Arreglado: ahora el menú lo explica ([TD-014](../TECH-DEBT.md#td-014--el-menú-contextual-de-un-túnel-no-dice-nada)). Para
     confirmar que descifra, mirar el emisor (`curl -v` → `issuer: CN=ProxyRR CA …`), no solo que
     verifique: el certificado real también verifica.
-  - Observación: el flujo editado en el breakpoint queda registrado (lista y HAR) con la URL original
-    (`origen=proxyrr`) aunque al origen salió la editada. Va en
-    [TD-015](../TECH-DEBT.md#td-015--el-flujo-editado-en-un-breakpoint-se-registra-con-la-url-original).
+  - El flujo editado en el breakpoint quedaba registrado (lista y HAR) con la URL original
+    (`origen=proxyrr`) aunque al origen salió la editada. Arreglado: se registra lo que salió
+    ([TD-015](../TECH-DEBT.md#td-015--el-flujo-editado-en-un-breakpoint-se-registra-con-la-url-original)).
 B6 ✅ App: Certificado… → Este equipo muestra el estado correcto (instalada) y los botones funcionan.
 - macOS: "Este equipo" muestra `ProxyRR CA (f950a201)`, el SHA-256 `A5:1D:7D:…:A6:BF` (igual al de
   `security find-certificate -Z` y `ca status`), "llavero de inicio de sesión", "confianza SSL", el

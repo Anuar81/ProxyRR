@@ -26,6 +26,7 @@ import {
   requestsTo,
   ruleSummary,
   statusClass,
+  tunnelMenuNote,
 } from "../ui/lib.js";
 
 const flow = (id, extra = {}) => ({
@@ -153,6 +154,15 @@ test("CONNECT descifrados: se ocultan salvo que tengan aviso o se pidan", () => 
   const list = new FlowList();
   for (const f of [quiet, warned, opaque, http]) list.upsert(f);
   assert.deepEqual(list.visible("").map((f) => f.id), [2, 3, 4]);
+});
+
+test("tunnelMenuNote: el clic derecho en un túnel explica por qué no hay comandos", () => {
+  const tunnel = { id: 1, method: "CONNECT", url: "api.x.com:443", tunnel: true, intercepted: false, failed: false };
+  assert.match(tunnelMenuNote(tunnel), /sin descifrar.*Descifrar HTTPS/);
+  assert.match(tunnelMenuNote({ ...tunnel, intercepted: true }), /descifrado.*https:\/\//);
+  assert.match(tunnelMenuNote({ ...tunnel, intercepted: true, failed: true }), /falló/);
+  assert.match(tunnelMenuNote({ kind: "tunnel", intercepted: false }), /sin descifrar/, "el detalle usa kind");
+  assert.equal(tunnelMenuNote(flow(2)), null, "un flujo HTTP tiene sus comandos");
 });
 
 test("requestsTo: los requests al destino de un túnel", () => {

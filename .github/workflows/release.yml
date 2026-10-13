@@ -1,7 +1,9 @@
 name: Release
 
 # Empujar un tag vX.Y.Z arma el instalador de macOS y lo deja en una GitHub Release en BORRADOR
-# (spec 0013). Se publica a mano desde la página de Releases.
+# (spec 0013). Se publica a mano desde la página de Releases. También sirve crear la release desde la
+# web (Releases → Draft a new release → tag nuevo vX.Y.Z → Publish): al publicar se crea el tag, corre
+# este workflow y le sube los archivos a esa release (tarda unos minutos en aparecer).
 #
 # Notarización (opcional): si están estos secretos, firma con Developer ID y notariza; si no, publica
 # con firma ad-hoc y el título dice "(sin notarizar)".
@@ -81,12 +83,18 @@ jobs:
           APPLE_API_KEY: ${{ env.HAS_APPLE == 'true' && secrets.APPLE_API_KEY || '' }}
         run: sh scripts/build-macos.sh
 
-      - name: Release en borrador
+      # Dos caminos: tag empujado desde la terminal (no hay release: se crea en borrador) o release
+      # creada desde la web de GitHub, que crea el tag al publicar (ya existe: se le suben los archivos).
+      - name: Subir a la release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          title="ProxyRR $GITHUB_REF_NAME"
-          if [ "$HAS_APPLE" != "true" ]; then title="$title (sin notarizar)"; fi
-          gh release create "$GITHUB_REF_NAME" --draft --title "$title" \
-            --notes-file scripts/release-notes.md \
-            dist/*.dmg dist/*.tar.gz dist/SHA256SUMS dist/install.sh
+          files="dist/*.dmg dist/*.tar.gz dist/SHA256SUMS dist/install.sh"
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" $files --clobber
+          else
+            title="ProxyRR $GITHUB_REF_NAME"
+            if [ "$HAS_APPLE" != "true" ]; then title="$title (sin notarizar)"; fi
+            gh release create "$GITHUB_REF_NAME" --draft --title "$title" \
+              --notes-file scripts/release-notes.md $files
+          fi

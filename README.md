@@ -48,8 +48,10 @@ guarda la clave privada de la CA.
 
 **Armar el instalador** (en una Mac, sin cuenta de Apple): `cargo install tauri-cli --version =2.12.0
 --locked` una vez y después `scripts/build-macos.sh`. Deja en `dist/` los `.dmg` y tarballs de Apple Silicon e Intel, `install.sh`
-y `SHA256SUMS`, listos para pasar a mano. Empujar un tag `vX.Y.Z` hace lo mismo en CI y lo sube a una
-release en borrador.
+y `SHA256SUMS`, listos para pasar a mano. Para publicar una versión: en GitHub, Releases → **Draft a
+new release** → tag nuevo `vX.Y.Z` (igual a la versión de `Cargo.toml`) → **Publish**; el workflow
+`Release` arma los instaladores y se los sube a esa release en unos 15 minutos. Empujar el tag desde
+la terminal hace lo mismo, pero deja la release en borrador.
 
 ## Arrancar
 

@@ -30,7 +30,9 @@ pub fn link_plan(os: Os, cli: &Path) -> Result<Step, String> {
     let path = cli
         .to_str()
         .ok_or_else(|| "la ruta de la CLI no es UTF-8".to_owned())?;
-    if !cli.is_absolute() || path.contains(['"', '\\', '\n', '\r']) {
+    // Ruta de macOS: absoluta = empieza con `/`. No `Path::is_absolute`, que en Windows exige letra de
+    // unidad y haría fallar los tests de este plan (que corren en los 3 sistemas).
+    if !path.starts_with('/') || path.contains(['"', '\\', '\n', '\r']) {
         return Err(format!(
             "ruta de la CLI no soportada para enlazar desde la app: {path}"
         ));

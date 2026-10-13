@@ -141,17 +141,22 @@ pub fn guide(target: Target, ctx: &GuideContext<'_>) -> Guide {
             Vec::new(),
             Some(direct_url.clone()),
         ),
-        Target::IosSimulator => (
-            "Simulador de iOS (macOS)".to_owned(),
-            vec![
-                format!("Levantá el proxy: `{local}`."),
-                format!("El simulador usa el proxy de macOS: Ajustes del Sistema → Red → (tu red) → Detalles → Proxies → Web y Web segura: 127.0.0.1:{port}."),
-                "Con el simulador abierto: `proxyrr setup ios-simulator --install` instala la CA sola (`xcrun simctl keychain booted add-root-cert`).".to_owned(),
-                "Reiniciá la app en el simulador para que tome la CA nueva.".to_owned(),
-            ],
-            Vec::new(),
-            None,
-        ),
+        Target::IosSimulator => {
+            notes.push(format!("Mientras el proxy de la Mac apunte a 127.0.0.1:{port}, si ProxyRR está detenido la Mac se queda sin internet: al terminar, apagá \"Proxy web\" y \"Proxy web seguro\"."));
+            notes.push("Con el proxy de la Mac activo, los servicios de Apple e iCloud fallan el TLS (pinning) y llenan la lista: poné `*.apple.com, *.icloud.com` en «Sin descifrar» antes de Iniciar.".to_owned());
+            (
+                "Simulador de iOS (macOS)".to_owned(),
+                vec![
+                    format!("Levantá el proxy descifrando: en la app, «Descifrar HTTPS» marcado → Iniciar; arriba tiene que decir \"Escuchando en 127.0.0.1:{port} · HTTPS descifrado\" (si dice \"HTTPS en túnel\", no descifra). En la terminal: `{local}`."),
+                    format!("El simulador no tiene proxy propio: usa el de la Mac. Ajustes del Sistema → Red → (tu red) → Detalles → Proxies → prendé \"Proxy web (HTTP)\" y \"Proxy web seguro (HTTPS)\", los dos con 127.0.0.1 y puerto {port}."),
+                    "Con el simulador abierto, tocá «Instalar en el simulador abierto» (abajo). En la terminal: `proxyrr setup ios-simulator --install`. No hace falta instalar la CA en la Mac.".to_owned(),
+                    "Cerrá y volvé a abrir la app del simulador (o Safari) para que tome la CA.".to_owned(),
+                    "Comprobá: en Safari del simulador abrí http://proxyrr.cert (si carga, el tráfico pasa por el proxy) y después cualquier sitio https://: tiene que cargar sin aviso y verse en la lista con su URL https://, no solo como CONNECT.".to_owned(),
+                ],
+                Vec::new(),
+                None,
+            )
+        }
         Target::AndroidEmulator => {
             notes.push("La configuración automática del emulador (proxy + CA en el store del sistema vía adb, también en Android 14+) llega con la spec 0002. Mientras tanto, estos pasos sirven para Chrome y para apps con network_security_config.".to_owned());
             (
@@ -278,6 +283,19 @@ mod tests {
             assert!(text.contains("0.0.0.0:9090"), "{target}");
             assert_eq!(g.qr_url.as_deref(), Some("http://192.168.1.50:9090/cert"));
         }
+    }
+
+    #[test]
+    fn ios_simulator_says_how_to_check_it_decrypts() {
+        let f = files();
+        let text = render(&guide(Target::IosSimulator, &ctx(&f)));
+        // Lo que faltó al probarlo en otra Mac (spec 0013): cómo saber que descifra y qué prender.
+        assert!(text.contains("HTTPS descifrado"), "{text}");
+        assert!(text.contains("HTTPS en túnel"), "{text}");
+        assert!(text.contains("Proxy web seguro (HTTPS)"), "{text}");
+        assert!(text.contains("Instalar en el simulador abierto"), "{text}");
+        assert!(text.contains("http://proxyrr.cert"), "{text}");
+        assert!(text.contains("se queda sin internet"), "{text}");
     }
 
     #[test]

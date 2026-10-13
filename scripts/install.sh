@@ -50,6 +50,13 @@ say "Bajando la lista de archivos de $URL"
 curl -fsSL "$URL/SHA256SUMS" -o "$TMP/SHA256SUMS" || die "no pude bajar SHA256SUMS de $URL"
 NAME=$(awk -v want="-macos-$LABEL.tar.gz" '$2 ~ /^proxyrr-/ && substr($2, length($2) - length(want) + 1) == want { print $2; exit }' "$TMP/SHA256SUMS")
 [ -n "$NAME" ] || die "esta release no tiene versión para Mac $LABEL"
+# El nombre viene de un archivo bajado: tiene que ser exactamente el esperado, sin `/` ni `..`, para
+# que no pueda escribir fuera de $TMP.
+case "$NAME" in
+  */* | *..* ) die "nombre de archivo inválido en SHA256SUMS: $NAME" ;;
+esac
+printf '%s\n' "$NAME" | grep -Eq "^proxyrr-[0-9A-Za-z.+-]+-macos-$LABEL\.tar\.gz\$" ||
+  die "nombre de archivo inválido en SHA256SUMS: $NAME"
 
 say "Bajando $NAME (Mac $LABEL)"
 curl -fsSL "$URL/$NAME" -o "$TMP/$NAME" || die "no pude bajar $NAME"

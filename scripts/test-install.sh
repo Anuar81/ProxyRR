@@ -73,6 +73,19 @@ else
   fail "reinstalar: $(cat "$WORK/latest/log")"
 fi
 
+# Un SHA256SUMS con un nombre que sale del directorio temporal: se rechaza antes de bajar nada.
+EVIL="$WORK/evil/latest/download"
+mkdir -p "$EVIL"
+printf '%s  %s\n' 0000 "proxyrr-1/../../../escapado-macos-$HERE.tar.gz" > "$EVIL/SHA256SUMS"
+if env PROXYRR_BASE_URL="file://$WORK/evil" PROXYRR_APPS_DIR="$WORK/evil/Apps" \
+  PROXYRR_BIN_DIR="$WORK/evil/bin" sh "$ROOT/scripts/install.sh" > "$WORK/evil/log" 2>&1; then
+  fail "nombre con ../ en SHA256SUMS: no falló"
+elif grep -q "nombre de archivo inválido" "$WORK/evil/log"; then
+  ok "nombre con ../ en SHA256SUMS: se rechaza"
+else
+  fail "nombre con ../: mensaje inesperado: $(cat "$WORK/evil/log")"
+fi
+
 # Checksum que no coincide: aborta sin tocar el destino.
 printf 'basura' >> "$BASE/latest/download/proxyrr-9.9.9-macos-$HERE.tar.gz"
 if run_install tampered; then

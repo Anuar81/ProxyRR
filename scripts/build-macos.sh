@@ -66,9 +66,9 @@ build() {
 
   if can_notarize; then
     echo "==> [$label] Notarización de la app"
-    ditto -c -k --keepParent "$app" "$DIST/notarize-app.zip"
-    notarize "$DIST/notarize-app.zip"
-    rm "$DIST/notarize-app.zip"
+    ditto -c -k --keepParent "$app" "$DIST/notarize-app-$label.zip"
+    notarize "$DIST/notarize-app-$label.zip"
+    rm "$DIST/notarize-app-$label.zip"
     xcrun stapler staple "$app"
     "$ROOT/scripts/check-macos-bundle.sh" "$app" --arch "$arch" --signed
   else
@@ -76,7 +76,7 @@ build() {
   fi
 
   echo "==> [$label] .dmg"
-  stage="$DIST/dmg-stage"
+  stage="$DIST/dmg-stage-$label"
   rm -rf "$stage"
   mkdir -p "$stage"
   ditto "$app" "$stage/ProxyRR.app"

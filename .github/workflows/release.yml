@@ -83,6 +83,13 @@ jobs:
           APPLE_API_KEY: ${{ env.HAS_APPLE == 'true' && secrets.APPLE_API_KEY || '' }}
         run: sh scripts/build-macos.sh
 
+      # El llavero temporal y la API key no sobreviven al build, aunque haya fallado.
+      - name: Borrar el certificado y la API key
+        if: always() && env.HAS_APPLE == 'true'
+        run: |
+          rm -f "$RUNNER_TEMP/api-key.p8" "$RUNNER_TEMP/cert.p12"
+          security delete-keychain "$RUNNER_TEMP/firma.keychain-db" 2>/dev/null || true
+
       # Dos caminos: tag empujado desde la terminal (no hay release: se crea en borrador) o release
       # creada desde la web de GitHub, que crea el tag al publicar (ya existe: se le suben los archivos).
       - name: Subir a la release

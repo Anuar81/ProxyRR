@@ -31,6 +31,7 @@ Referencia funcional: el set de features de Proxyman (implementación propia, si
 | 0011 | [debug-tools](0011-debug-tools/requirements.md) | F3 | terminada (PR #10) |
 | 0012 | [macos-linux-validation](0012-macos-linux-validation/requirements.md) | cierre | en curso: macOS ✅ (2026-10-13); falta Linux (sección C, TD-009) |
 | 0013 | [macos-installer](0013-macos-installer/requirements.md) | distribución | terminada: `.dmg` y `install.sh` por arquitectura (sin notarizar), CLI incluida, release por tag; notarización opcional |
+| 0014 | [domain-grouping](0014-domain-grouping/requirements.md) | F2 | borrador: panel Fuentes (apps, dispositivos, dominios) armado solo con el tráfico |
 
 Orden acordado para llegar rápido a algo usable (la app de escritorio):
 `flow-store` → `control-api` → **0006 certificate-setup** (CLI `ca install`, página `proxyrr.cert`, guías)
